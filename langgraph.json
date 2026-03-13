@@ -1,0 +1,12 @@
+{
+  "dependencies": [
+    ".",
+    "langchain-perplexity",
+    "langchain-qwq",
+    "langchain-tavily"
+  ],
+  "graphs": {
+    "news_writer": "./src/litenews/graphs/news_graph.py:graph"
+  },
+  "env": "./.env"
+}
