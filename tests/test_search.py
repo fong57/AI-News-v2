@@ -7,7 +7,7 @@ from litenews.config.settings import Settings
 from litenews.tools.search import (
     get_tavily_search_tool,
     search_news_sync,
-    test_tavily_connection,
+    verify_tavily_connection,
 )
 
 
@@ -24,7 +24,7 @@ class TestTavilyIntegration:
     
     def test_connection(self, api_key):
         """Test basic Tavily API connection."""
-        result = test_tavily_connection(api_key)
+        result = verify_tavily_connection(api_key)
         assert result["status"] == "success", f"Connection failed: {result.get('error')}"
     
     def test_search_tool_creation(self, api_key):
@@ -37,7 +37,7 @@ class TestTavilyIntegration:
         """Test searching for news."""
         settings = Settings(
             tavily_api_key=api_key,
-            tavily_max_results=3,
+            tavily_research_max_results=3,
             tavily_search_depth="fast",
         )
         results = search_news_sync("latest technology news", settings=settings)
@@ -50,7 +50,7 @@ class TestTavilyIntegration:
         
         settings = Settings(
             tavily_api_key=api_key,
-            tavily_max_results=2,
+            tavily_research_max_results=2,
             tavily_search_depth="fast",
         )
         results = await search_news("AI developments", settings=settings)
@@ -62,18 +62,25 @@ class TestSearchConfiguration:
     
     def test_default_settings(self):
         """Test default search settings."""
-        settings = Settings()
+        settings = Settings(_env_file=None)
         assert settings.tavily_search_depth == "advanced"
-        assert settings.tavily_max_results == 5
         assert settings.tavily_topic == "news"
+        assert settings.tavily_research_max_results == 20
+        assert settings.tavily_fact_check_max_results == 10
+        assert settings.tavily_write_max_results == 5
     
     def test_custom_settings(self):
-        """Test custom search settings."""
+        """Test custom per-node max results and shared depth/topic."""
         settings = Settings(
+            _env_file=None,
             tavily_search_depth="basic",
-            tavily_max_results=10,
             tavily_topic="finance",
+            tavily_research_max_results=15,
+            tavily_fact_check_max_results=8,
+            tavily_write_max_results=4,
         )
         assert settings.tavily_search_depth == "basic"
-        assert settings.tavily_max_results == 10
         assert settings.tavily_topic == "finance"
+        assert settings.tavily_research_max_results == 15
+        assert settings.tavily_fact_check_max_results == 8
+        assert settings.tavily_write_max_results == 4

@@ -103,3 +103,9 @@ langgraph deploy
 ## License
 
 MIT
+
+
+# Run all workflow tests
+pytest tests/workflow/ -v
+# Run specific node tests
+pytest tests/workflow/nodes/test_research.py -v

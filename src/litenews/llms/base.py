@@ -5,6 +5,7 @@ allowing easy swapping of LLMs without changing application code.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -96,13 +97,19 @@ class BaseLLM(ABC):
         return cls(config)
 
 
-def get_llm(provider: str | None = None, settings: Settings | None = None) -> BaseLLM:
+def get_llm(
+    provider: str | None = None,
+    settings: Settings | None = None,
+    *,
+    model_override: str | None = None,
+) -> BaseLLM:
     """Factory function to get an LLM instance.
     
     Args:
         provider: LLM provider name ('perplexity' or 'qwen'). 
                   If None, uses primary_llm from settings.
         settings: Optional settings instance.
+        model_override: If set, use this model id instead of the env default for the provider.
         
     Returns:
         BaseLLM: The LLM instance.
@@ -116,6 +123,9 @@ def get_llm(provider: str | None = None, settings: Settings | None = None) -> Ba
     settings = settings or get_settings()
     provider = provider or settings.primary_llm
     config = get_llm_config(provider, settings)
+    mo = (model_override or "").strip()
+    if mo:
+        config = replace(config, model=mo)
     
     if provider == "perplexity":
         return PerplexityLLM(config)

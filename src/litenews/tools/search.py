@@ -11,9 +11,29 @@ from langchain_tavily import TavilySearch
 
 from litenews.config.settings import Settings, get_settings
 
+TavilyWorkflowNode = Literal["research", "fact_check", "write"]
+
+
+def _resolve_max_results(
+    settings: Settings,
+    node: TavilyWorkflowNode | None,
+    max_results: int | None,
+) -> int:
+    if max_results is not None:
+        return max_results
+    if node == "research":
+        return settings.tavily_research_max_results
+    if node == "fact_check":
+        return settings.tavily_fact_check_max_results
+    if node == "write":
+        return settings.tavily_write_max_results
+    return settings.tavily_write_max_results
+
 
 def get_tavily_search_tool(
     settings: Settings | None = None,
+    *,
+    node: TavilyWorkflowNode | None = None,
     max_results: int | None = None,
     search_depth: Literal["basic", "advanced", "fast", "ultra-fast"] | None = None,
     topic: Literal["general", "news", "finance"] | None = None,
@@ -24,7 +44,9 @@ def get_tavily_search_tool(
     
     Args:
         settings: Optional settings instance.
-        max_results: Maximum search results (overrides settings).
+        node: Workflow node whose per-node max_results defaults apply (research /
+            fact_check / write). Ignored if ``max_results`` is set.
+        max_results: Maximum search results (overrides per-node settings).
         search_depth: Search depth (overrides settings).
         topic: Search topic (overrides settings).
         include_answer: Whether to include AI-generated answer.
@@ -34,10 +56,11 @@ def get_tavily_search_tool(
         TavilySearch: Configured Tavily search tool.
     """
     settings = settings or get_settings()
-    
+    resolved_max = _resolve_max_results(settings, node, max_results)
+
     return TavilySearch(
         api_key=settings.tavily_api_key,
-        max_results=max_results or settings.tavily_max_results,
+        max_results=resolved_max,
         search_depth=search_depth or settings.tavily_search_depth,
         topic=topic or settings.tavily_topic,
         include_answer=include_answer,
@@ -91,7 +114,7 @@ async def search_news(
     
     tool = TavilySearch(
         api_key=settings.tavily_api_key,
-        max_results=max_results or settings.tavily_max_results,
+        max_results=max_results or settings.tavily_research_max_results,
         search_depth=settings.tavily_search_depth,
         topic="news",
         include_answer=True,
@@ -123,7 +146,7 @@ def search_news_sync(
     
     tool = TavilySearch(
         api_key=settings.tavily_api_key,
-        max_results=max_results or settings.tavily_max_results,
+        max_results=max_results or settings.tavily_research_max_results,
         search_depth=settings.tavily_search_depth,
         topic="news",
         include_answer=True,
@@ -134,8 +157,8 @@ def search_news_sync(
     return results
 
 
-def test_tavily_connection(api_key: str) -> dict[str, Any]:
-    """Test Tavily API connection.
+def verify_tavily_connection(api_key: str) -> dict[str, Any]:
+    """Verify Tavily API connectivity with a minimal search.
     
     Args:
         api_key: Tavily API key.

@@ -42,6 +42,9 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/litenews/workflow/write_few_shots.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

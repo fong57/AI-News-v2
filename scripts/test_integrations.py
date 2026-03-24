@@ -23,7 +23,7 @@ from litenews.config.settings import get_settings, reload_settings
 from litenews.config.tracing import test_langsmith_connection, get_tracing_status
 from litenews.llms.perplexity import test_perplexity_connection
 from litenews.llms.qwen import test_qwen_connection
-from litenews.tools.search import test_tavily_connection
+from litenews.tools.search import verify_tavily_connection
 
 
 def print_header(title: str):
@@ -86,7 +86,7 @@ def test_tavily():
     if not settings.has_tavily_key():
         return {"status": "skipped", "error": "TAVILY_API_KEY not configured"}
     
-    return test_tavily_connection(api_key=settings.tavily_api_key)
+    return verify_tavily_connection(settings.tavily_api_key)
 
 
 def test_langsmith():
@@ -102,14 +102,17 @@ def test_langsmith():
 async def test_full_workflow():
     """Test a simplified version of the news workflow."""
     from litenews.state.news_state import create_initial_state
-    from litenews.graphs.news_graph import research_node
+    from litenews.workflow.nodes import research_node
     
     settings = get_settings()
     
     if not settings.has_tavily_key():
         return {"status": "skipped", "error": "TAVILY_API_KEY not configured for workflow test"}
     
-    state = create_initial_state("artificial intelligence latest developments")
+    state = create_initial_state(
+        "artificial intelligence latest developments",
+        "其他",
+    )
     
     try:
         result = await research_node(state)
@@ -137,6 +140,12 @@ def main():
     print(f"  Perplexity Model: {settings.perplexity_model}")
     print(f"  Qwen Model: {settings.qwen_model}")
     print(f"  Search Depth: {settings.tavily_search_depth}")
+    print(
+        "  Tavily max results (research / fact-check / write): "
+        f"{settings.tavily_research_max_results} / "
+        f"{settings.tavily_fact_check_max_results} / "
+        f"{settings.tavily_write_max_results}"
+    )
     print(f"  LangSmith Project: {settings.langchain_project}")
     
     print_header("Testing LLM Connections")

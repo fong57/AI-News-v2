@@ -73,20 +73,32 @@ class Settings(BaseSettings):
         description="LLM temperature",
     )
     
-    # Search Configuration
+    # Search Configuration (shared by all Tavily-using nodes unless overridden per node)
     tavily_search_depth: Literal["basic", "advanced", "fast", "ultra-fast"] = Field(
         default="advanced",
-        description="Tavily search depth",
-    )
-    tavily_max_results: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Maximum search results",
+        description="Tavily search depth (research, fact-check, write)",
     )
     tavily_topic: Literal["general", "news", "finance"] = Field(
         default="news",
-        description="Search topic for Tavily",
+        description="Tavily topic (research, fact-check, write)",
+    )
+    tavily_research_max_results: int = Field(
+        default=20,
+        ge=1,
+        le=20,
+        description="Max Tavily results per query in the research node",
+    )
+    tavily_fact_check_max_results: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description="Max Tavily results per claim search in the fact-check node",
+    )
+    tavily_write_max_results: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Max Tavily results per outline query in the write node",
     )
     
     def has_perplexity_key(self) -> bool:

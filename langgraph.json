@@ -6,7 +6,7 @@
     "langchain-tavily"
   ],
   "graphs": {
-    "news_writer": "./src/litenews/graphs/news_graph.py:graph"
+    "news_writer": "./src/litenews/workflow/__init__.py:graph"
   },
   "env": "./.env"
 }
