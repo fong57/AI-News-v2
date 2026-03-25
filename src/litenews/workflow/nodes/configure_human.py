@@ -1,17 +1,24 @@
-"""Human-in-the-loop confirmation after configure, before research.
+"""Human-in-the-loop confirmation after configure, before research or edit draft.
 
-Shows resolved topic, article type, word target, LLM settings, and optional query so a
-human can confirm or adjust values required for the research node.
+Shows resolved topic, article type, word target, LLM settings, optional query, and
+``task`` (``write`` vs ``edit``) so a human can confirm before the next step.
+
+When ``task`` is ``edit``, the graph routes to ``edit_human`` instead of research.
 
 Interrupts require a checkpointer — see ``outline_human`` / ``graph_builder`` docstring.
 """
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from langgraph.types import interrupt
 
 from litenews.config.settings import get_settings
-from litenews.state.news_state import LLMProvider, NewsState, validate_article_type
+from litenews.state.news_state import (
+    LLMProvider,
+    NewsState,
+    WorkflowTask,
+    validate_article_type,
+)
 from litenews.workflow.utils import create_error_response
 
 # Exclude "confirm" — reserved for ``{'action': 'confirm', ...}`` merge semantics.
@@ -24,6 +31,7 @@ _CONFIGURE_KEYS = (
     "llm_provider",
     "llm_model",
     "query",
+    "task",
 )
 
 
@@ -81,6 +89,14 @@ def _validate_merged_configure(state: NewsState) -> dict:
     query = state.get("query")
     query_s = "" if query is None else str(query)
 
+    raw_task = state.get("task", "write")
+    t_task = str(raw_task).strip().lower() if raw_task is not None else "write"
+    if t_task not in ("write", "edit"):
+        return create_error_response(
+            "Configure review: task must be 'write' (full pipeline) or 'edit' (paste draft, skip to fact-check)"
+        )
+    wf_task = cast(WorkflowTask, t_task)
+
     return {
         "topic": topic,
         "article_type": validate_article_type(str(raw_at)),
@@ -88,6 +104,7 @@ def _validate_merged_configure(state: NewsState) -> dict:
         "llm_provider": llm_provider,
         "llm_model": llm_model,
         "query": query_s,
+        "task": wf_task,
         "status": "configure_confirmed",
     }
 
@@ -115,11 +132,9 @@ def _configure_human_resume(resume: Any, state: NewsState) -> dict:
         )
 
     action = str(resume.get("action", "")).strip().lower()
-    if action in _ACCEPT_TOKENS or action == "accept" or resume.get("confirmed") is True:
-        return _validate_merged_configure(state)
-
     merged: NewsState = cast(NewsState, dict(state))
-    if action == "confirm" or any(k in resume for k in _CONFIGURE_KEYS):
+    had_key_updates = any(k in resume for k in _CONFIGURE_KEYS)
+    if action == "confirm" or had_key_updates:
         for k in _CONFIGURE_KEYS:
             if k not in resume:
                 continue
@@ -130,10 +145,23 @@ def _configure_human_resume(resume: Any, state: NewsState) -> dict:
                 merged["query"] = "" if val is None else str(val)
             elif k == "topic" and val is not None:
                 merged["topic"] = str(val).strip()
+            elif k == "task" and val is not None:
+                merged["task"] = str(val).strip().lower()  # type: ignore[assignment]
             elif val is not None:
                 merged[k] = val  # type: ignore[assignment]
 
-    return _validate_merged_configure(merged)
+    accept_like = (
+        action in _ACCEPT_TOKENS
+        or action == "accept"
+        or resume.get("confirmed") is True
+    )
+    if accept_like or action == "confirm" or had_key_updates:
+        return _validate_merged_configure(merged)
+
+    return create_error_response(
+        "Configure review: expected {'action': 'accept'} or {'action': 'confirm', ...} "
+        "with fields to change."
+    )
 
 
 def configure_human_node(state: NewsState) -> dict:
@@ -150,12 +178,27 @@ def configure_human_node(state: NewsState) -> dict:
         "llm_provider": state.get("llm_provider", ""),
         "llm_model": state.get("llm_model", "") or "",
         "query": state.get("query") or "",
+        "task": state.get("task", "write"),
         "resume_help": (
             "To continue without changes: resume with {'action': 'accept'} or the string 'accept'. "
             "To adjust: resume with {'action': 'confirm', 'topic': '...', 'article_type': '...', "
             "'target_word_count': <int>, 'llm_provider': 'perplexity'|'qwen', "
-            "'llm_model': '...', 'query': '...'} — include only keys you want to change."
+            "'llm_model': '...', 'query': '...', 'task': 'write'|'edit'} — include only keys you want to change. "
+            "task 'write' runs research→outline→draft; 'edit' skips to a human draft step then fact-check."
         ),
     }
     resume = interrupt(payload)
     return _configure_human_resume(resume, state)
+
+
+def route_after_configure_human(
+    state: NewsState,
+) -> Literal["research", "edit_human", "error"]:
+    """After configure_human, branch to full pipeline or human draft entry for edit mode."""
+    if state.get("error"):
+        return "error"
+    raw = state.get("task", "write")
+    t = str(raw).strip().lower() if raw is not None else "write"
+    if t == "edit":
+        return "edit_human"
+    return "research"

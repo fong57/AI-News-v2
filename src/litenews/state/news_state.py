@@ -15,6 +15,8 @@ from litenews.config.settings import get_settings
 
 LLMProvider = Literal["perplexity", "qwen"]
 
+WorkflowTask = Literal["write", "edit"]
+
 DEFAULT_TARGET_WORD_COUNT = get_settings().default_target_word_count
 
 ArticleType = Literal["懶人包", "多方觀點", "其他"]
@@ -73,11 +75,13 @@ class NewsState(TypedDict, total=False):
         feedback: Any feedback or revision requests.
         status: Current workflow status.
         error: Error message if something went wrong.
+        task: ``write`` (default) full pipeline; ``edit`` human draft then fact_check only.
     """
     
     # Input
     topic: str
     article_type: ArticleType
+    task: WorkflowTask
     target_word_count: int
     llm_provider: LLMProvider
     llm_model: str
@@ -126,6 +130,7 @@ def create_initial_state(
     target_word_count: int | None = None,
     llm_provider: LLMProvider | None = None,
     llm_model: str = "",
+    task: WorkflowTask | None = None,
 ) -> NewsState:
     """Create initial state for the news writing workflow.
     
@@ -135,6 +140,7 @@ def create_initial_state(
         target_word_count: Optional word-count target; configure node fills default if omitted.
         llm_provider: Optional perplexity/qwen; configure uses settings.primary_llm if omitted.
         llm_model: Optional model name for the provider; empty means use env default.
+        task: Optional ``write`` (default) or ``edit`` (human draft then fact-check only).
 
     Raises:
         ValueError: If article_type is not one of the allowed values.
@@ -143,9 +149,14 @@ def create_initial_state(
         NewsState: Initial state with default values.
     """
     at = validate_article_type(article_type)
+    wt: WorkflowTask = task if task is not None else "write"
+    if wt not in ("write", "edit"):
+        raise ValueError("task 必須為 'write' 或 'edit'")
+
     init: NewsState = NewsState(
         topic=topic,
         article_type=at,
+        task=wt,
         query="",
         messages=[],
         search_results=[],

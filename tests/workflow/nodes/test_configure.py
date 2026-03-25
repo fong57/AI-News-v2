@@ -23,7 +23,22 @@ async def test_configure_applies_defaults():
     assert out["llm_provider"] == "qwen"
     assert out["llm_model"] == ""
     assert out["status"] == "configured"
+    assert out.get("task") == "write"
     assert "error" not in out
+
+
+@pytest.mark.asyncio
+async def test_configure_invalid_task():
+    settings = Settings(
+        pplx_api_key="k",
+        dashscope_api_key="k",
+        tavily_api_key="k",
+    )
+    state = {"article_type": "其他", "task": "bogus"}
+    with patch("litenews.workflow.nodes.configure.get_settings", return_value=settings):
+        out = await configure_workflow_node(state)
+    assert out["status"] == "error"
+    assert "task" in out["error"].lower()
 
 
 @pytest.mark.asyncio

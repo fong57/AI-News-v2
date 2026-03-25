@@ -46,9 +46,19 @@ async def configure_workflow_node(state: NewsState) -> dict:
             "DashScope API key is missing; set DASHSCOPE_API_KEY or choose perplexity."
         )
 
+    raw_task = state.get("task")
+    if raw_task is None or (isinstance(raw_task, str) and not str(raw_task).strip()):
+        task_norm = "write"
+    else:
+        s = str(raw_task).strip().lower()
+        if s not in ("write", "edit"):
+            return create_error_response("task must be 'write' or 'edit'")
+        task_norm = s
+
     return {
         "target_word_count": target_word_count,
         "llm_provider": llm_provider,
         "llm_model": llm_model,
+        "task": task_norm,
         "status": "configured",
     }

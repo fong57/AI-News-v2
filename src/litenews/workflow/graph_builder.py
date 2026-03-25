@@ -12,6 +12,7 @@ from litenews.workflow.nodes import (
     analyze_node,
     configure_human_node,
     configure_workflow_node,
+    edit_human_node,
     fact_check_node,
     outline_human_node,
     outline_node,
@@ -20,6 +21,7 @@ from litenews.workflow.nodes import (
     revise_human_node,
     write_node,
 )
+from litenews.workflow.nodes.configure_human import route_after_configure_human
 from litenews.workflow.nodes.fact_check import route_after_fact_check
 from litenews.workflow.nodes.revise import fact_check_remarks_node, revise_node
 from litenews.workflow.nodes.revise_human import route_after_revise_human
@@ -37,15 +39,17 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
 
     The workflow follows these steps:
     0. Configure: Resolve target word count (±10% in later prompts) and LLM provider/model
-    0b. Configure (human): Confirm or edit settings required for research (interrupt)
-    1. Research: Search for news sources on the topic
+    0b. Configure (human): Confirm or edit settings; choose task ``write`` (default) or ``edit`` (interrupt)
+    0c. Edit (human): When task is ``edit``, paste a full draft; skips research, outline, write (interrupt)
+    1. Research: Search for news sources on the topic (skipped when task is ``edit``)
     2. Analyze: Process and validate sources
     3. Outline: Create article outline
     4. Outline (human): Confirm AI outline or replace with a pasted outline (interrupt)
     5. Write: Generate the article draft
     6. Fact check: Extract claims, search, score factual support
-    7. Revise (loop): Soften contradicted/uncertain claims, re-run fact-check up to 5 rounds;
-       if still unresolved, append 【事實查核備註】 then continue
+    7. Revise: Always runs after fact-check (even when no issues); softens contradicted/uncertain
+       claims when present; up to 5 revise rounds when issues remain; if still unresolved,
+       append 【事實查核備註】 then continue
     8. Revise (human): Human decides to accept, give feedback for another revise loop,
        or replace draft manually
     9. Review: Polish and finalize the article
@@ -60,6 +64,7 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
 
     workflow.add_node("configure", configure_workflow_node)
     workflow.add_node("configure_human", configure_human_node)
+    workflow.add_node("edit_human", edit_human_node)
     workflow.add_node("research", research_node)
     workflow.add_node("analyze", analyze_node)
     workflow.add_node("outline", outline_node)
@@ -79,8 +84,13 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
     )
     workflow.add_conditional_edges(
         "configure_human",
+        route_after_configure_human,
+        {"research": "research", "edit_human": "edit_human", "error": END},
+    )
+    workflow.add_conditional_edges(
+        "edit_human",
         should_continue,
-        {"continue": "research", "error": END},
+        {"continue": "fact_check", "error": END},
     )
     # Conditional Edges:
     workflow.add_conditional_edges(
@@ -115,7 +125,6 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
             "error": END,
             "revise": "revise",
             "fact_check_remarks": "fact_check_remarks",
-            "review": "review",
         },
     )
     workflow.add_conditional_edges(

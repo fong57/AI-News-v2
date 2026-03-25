@@ -22,6 +22,7 @@ class TestCreateNewsGraph:
         expected_nodes = {
             "configure",
             "configure_human",
+            "edit_human",
             "research",
             "analyze",
             "outline",
@@ -29,6 +30,7 @@ class TestCreateNewsGraph:
             "write",
             "fact_check",
             "revise",
+            "revise_human",
             "fact_check_remarks",
             "review",
         }
@@ -73,12 +75,15 @@ class TestCreateNewsGraph:
         nodes_with_conditional_edges = {
             "configure",
             "configure_human",
+            "edit_human",
             "research",
             "analyze",
             "outline",
             "outline_human",
             "write",
             "fact_check",
+            "revise",
+            "revise_human",
         }
         for node in nodes_with_conditional_edges:
             node_edges = [e for e in edges if e[0] == node]

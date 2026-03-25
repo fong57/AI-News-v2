@@ -72,12 +72,12 @@ class TestRouteAfterFactCheck:
         s = _state(error="x", fact_check_revision_round=0)
         assert route_after_fact_check(s) == "error"
 
-    def test_clean_goes_review(self):
+    def test_clean_goes_revise(self):
         s = _state(
             fact_check_results={"claims": []},
             fact_check_revision_round=0,
         )
-        assert route_after_fact_check(s) == "review"
+        assert route_after_fact_check(s) == "revise"
 
     def test_issues_under_cap_goes_revise(self):
         s = _state(

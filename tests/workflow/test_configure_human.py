@@ -2,7 +2,11 @@
 
 import pytest
 
-from litenews.workflow.nodes.configure_human import _configure_human_resume, _validate_merged_configure
+from litenews.workflow.nodes.configure_human import (
+    _configure_human_resume,
+    _validate_merged_configure,
+    route_after_configure_human,
+)
 from litenews.state.news_state import create_initial_state
 
 
@@ -37,6 +41,7 @@ def test_validate_success(dummy_settings):
     assert out.get("error") is None
     assert out["status"] == "configure_confirmed"
     assert out["topic"] == "Test topic"
+    assert out.get("task") == "write"
 
 
 def test_validate_missing_topic(dummy_settings):
@@ -73,3 +78,29 @@ def test_resume_invalid_article_type(dummy_settings):
         s,
     )
     assert out.get("error")
+
+
+def test_resume_accept_with_task_edit(dummy_settings):
+    s = _base_state()
+    s["llm_model"] = ""
+    s["task"] = "write"
+    out = _configure_human_resume({"action": "accept", "task": "edit"}, s)
+    assert out.get("error") is None
+    assert out["task"] == "edit"
+
+
+def test_validate_invalid_task(dummy_settings):
+    s = _base_state()
+    s["llm_model"] = ""
+    s["task"] = "bogus"
+    out = _validate_merged_configure(s)
+    assert out.get("error")
+
+
+def test_route_after_configure_human(dummy_settings):
+    s = _base_state()
+    assert route_after_configure_human(s) == "research"
+    s["task"] = "edit"
+    assert route_after_configure_human(s) == "edit_human"
+    s["error"] = "x"
+    assert route_after_configure_human(s) == "error"

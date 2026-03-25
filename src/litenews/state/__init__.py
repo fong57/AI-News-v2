@@ -8,6 +8,7 @@ from litenews.state.news_state import (
     NewsArticle,
     NewsSource,
     NewsState,
+    WorkflowTask,
     create_initial_state,
     validate_article_type,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "NewsArticle",
     "NewsSource",
     "NewsState",
+    "WorkflowTask",
     "create_initial_state",
     "validate_article_type",
 ]

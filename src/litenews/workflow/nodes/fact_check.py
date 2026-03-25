@@ -108,15 +108,15 @@ def has_actionable_fact_check_issues(state: NewsState) -> bool:
 
 def route_after_fact_check(
     state: NewsState,
-) -> Literal["error", "revise", "fact_check_remarks", "review"]:
+) -> Literal["error", "revise", "fact_check_remarks"]:
     if state.get("error"):
         return "error"
-    if not has_actionable_fact_check_issues(state):
-        return "review"
-    round_n = int(state.get("fact_check_revision_round") or 0)
-    if round_n < _MAX_REVISION_ROUNDS:
-        return "revise"
-    return "fact_check_remarks"
+    if has_actionable_fact_check_issues(state):
+        round_n = int(state.get("fact_check_revision_round") or 0)
+        if round_n < _MAX_REVISION_ROUNDS:
+            return "revise"
+        return "fact_check_remarks"
+    return "revise"
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:
