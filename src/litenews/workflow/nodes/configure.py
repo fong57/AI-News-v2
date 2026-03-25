@@ -6,10 +6,6 @@ from litenews.config.settings import get_settings
 from litenews.state.news_state import LLMProvider, NewsState
 from litenews.workflow.utils import create_error_response
 
-_DEFAULT_TARGET_WORDS = 800
-_MIN_WORDS = 200
-_MAX_WORDS = 20000
-
 
 async def configure_workflow_node(state: NewsState) -> dict:
     """Resolve defaults, validate inputs, and ensure API keys for the chosen LLM."""
@@ -17,15 +13,16 @@ async def configure_workflow_node(state: NewsState) -> dict:
 
     raw_twc = state.get("target_word_count")
     if raw_twc is None:
-        target_word_count = _DEFAULT_TARGET_WORDS
+        target_word_count = settings.default_target_word_count
     else:
         try:
             target_word_count = int(raw_twc)
         except (TypeError, ValueError):
             return create_error_response("target_word_count must be an integer")
-        if target_word_count < _MIN_WORDS or target_word_count > _MAX_WORDS:
+        lo, hi = settings.min_target_word_count, settings.max_target_word_count
+        if target_word_count < lo or target_word_count > hi:
             return create_error_response(
-                f"target_word_count must be between {_MIN_WORDS} and {_MAX_WORDS}"
+                f"target_word_count must be between {lo} and {hi}"
             )
 
     raw_lp = state.get("llm_provider")

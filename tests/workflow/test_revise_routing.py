@@ -1,7 +1,7 @@
 """Tests for fact-check → revise routing and remarks."""
 
 from litenews.state.news_state import NewsState
-from litenews.workflow.nodes.revise import (
+from litenews.workflow.nodes.fact_check import (
     has_actionable_fact_check_issues,
     route_after_fact_check,
 )

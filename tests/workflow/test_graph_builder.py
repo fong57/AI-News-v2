@@ -21,6 +21,7 @@ class TestCreateNewsGraph:
         node_names = set(graph.nodes.keys())
         expected_nodes = {
             "configure",
+            "configure_human",
             "research",
             "analyze",
             "outline",
@@ -71,6 +72,7 @@ class TestCreateNewsGraph:
 
         nodes_with_conditional_edges = {
             "configure",
+            "configure_human",
             "research",
             "analyze",
             "outline",

@@ -72,6 +72,23 @@ class Settings(BaseSettings):
         le=2.0,
         description="LLM temperature",
     )
+
+    # Target word count (configure node defaults and validation bounds)
+    default_target_word_count: int = Field(
+        default=800,
+        ge=1,
+        description="Default article body word-count target when omitted from workflow state",
+    )
+    min_target_word_count: int = Field(
+        default=200,
+        ge=1,
+        description="Minimum allowed target_word_count from workflow state",
+    )
+    max_target_word_count: int = Field(
+        default=20000,
+        ge=1,
+        description="Maximum allowed target_word_count from workflow state",
+    )
     
     # Search Configuration (shared by all Tavily-using nodes unless overridden per node)
     tavily_search_depth: Literal["basic", "advanced", "fast", "ultra-fast"] = Field(

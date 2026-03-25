@@ -65,7 +65,7 @@ async def research_node(state: NewsState) -> dict:
         )
 
     # Use custom query if exists, else auto-generate Chinese-focused query
-    base_query = state.get("query") or f"Latest news about {topic}"
+    base_query = state.get("query") or f"搜索關於「{topic}」的最新消息"
     # Add Chinese source/language priority for auto-generated queries only
     if state.get("query"):
         search_query = base_query

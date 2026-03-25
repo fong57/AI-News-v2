@@ -4,16 +4,18 @@ This module defines the state schema used by the LangGraph workflow.
 The state is typed using TypedDict for better type safety and documentation.
 """
 
-from typing import Annotated, Any, Literal, cast
-
-LLMProvider = Literal["perplexity", "qwen"]
-
-DEFAULT_TARGET_WORD_COUNT = 800
 from operator import add
+from typing import Annotated, Any, Literal, cast
 
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
+
+from litenews.config.settings import get_settings
+
+LLMProvider = Literal["perplexity", "qwen"]
+
+DEFAULT_TARGET_WORD_COUNT = get_settings().default_target_word_count
 
 ArticleType = Literal["懶人包", "多方觀點", "其他"]
 

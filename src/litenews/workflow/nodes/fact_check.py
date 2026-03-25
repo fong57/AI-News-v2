@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_DRAFT_CHARS = 2000
 _MAX_CLAIMS_TO_VERIFY = 15
+_MAX_REVISION_ROUNDS = 5
 
 _CONNECTION_RE = re.compile(
     r"connection error|fetch failed|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|network|"
@@ -78,6 +79,44 @@ def _message_text(msg: BaseMessage) -> str:
                 parts.append(str(block))
         return "".join(parts)
     return str(c or "")
+
+
+def _claim_importance(claim: dict[str, Any]) -> int:
+    try:
+        return max(1, min(5, int(float(claim.get("importance", 3)))))
+    except (TypeError, ValueError):
+        return 3
+
+
+def has_actionable_fact_check_issues(state: NewsState) -> bool:
+    """True if any important claim (importance ≥ 3) is contradicted or uncertain."""
+    fr = state.get("fact_check_results") or {}
+    if fr.get("skipped"):
+        return False
+    claims = fr.get("claims")
+    if not isinstance(claims, list):
+        return False
+    for c in claims:
+        if not isinstance(c, dict):
+            continue
+        if _claim_importance(c) < 3:
+            continue
+        if c.get("status") in ("contradicted", "uncertain"):
+            return True
+    return False
+
+
+def route_after_fact_check(
+    state: NewsState,
+) -> Literal["error", "revise", "fact_check_remarks", "review"]:
+    if state.get("error"):
+        return "error"
+    if not has_actionable_fact_check_issues(state):
+        return "review"
+    round_n = int(state.get("fact_check_revision_round") or 0)
+    if round_n < _MAX_REVISION_ROUNDS:
+        return "revise"
+    return "fact_check_remarks"
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:
@@ -348,7 +387,7 @@ async def _run_fact_check_incremental(
     extract_user = f"""Revised excerpt only (in {lang}):
 {focus_excerpt}{suffix}
 
-Extract up to 15 factual claims (short sentences) that appear in this excerpt and can be checked."""
+Extract up to 10 factual claims (short sentences) that appear in this excerpt and can be checked."""
 
     raw_claims = await _llm_extract_claims(
         system=_EXTRACT_SYSTEM_INCREMENTAL,

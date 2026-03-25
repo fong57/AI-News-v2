@@ -54,7 +54,7 @@ class TestResearchNode:
              patch("litenews.workflow.nodes.research.get_tavily_search_tool", return_value=mock_search_tool):
             result = await research_node(base_state)
 
-        assert result["query"] == "Latest news about climate change"
+        assert result["query"] == "搜索關於「climate change」的最新消息"
         assert result["status"] == "researched"
 
     @pytest.mark.asyncio
