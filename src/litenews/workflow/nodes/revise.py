@@ -11,6 +11,7 @@ from litenews.state.news_state import (
     NewsState,
     validate_article_type,
 )
+from litenews.workflow.fact_check_diff import normalize_claim_key
 from litenews.workflow.nodes.fact_check import _claim_importance
 from litenews.workflow.prompts import revise_system_prompt
 from litenews.workflow.utils import (
@@ -19,8 +20,31 @@ from litenews.workflow.utils import (
     workflow_llm_options,
 )
 
+_REMARKS_BLOCK_START = "\n\n---\n【事實查核備註】"
+_REMARKS_BLOCK_START_ALT = "\n---\n【事實查核備註】"
 
-def _build_unresolved_remarks_block(fr: dict[str, Any]) -> str:
+
+def _strip_trailing_remarks_block(draft: str) -> str:
+    """Return article body without a trailing 【事實查核備註】 section, if present."""
+    if not draft:
+        return ""
+    for marker in (_REMARKS_BLOCK_START, _REMARKS_BLOCK_START_ALT):
+        idx = draft.find(marker)
+        if idx >= 0:
+            return draft[:idx].rstrip()
+    return draft
+
+
+def _claim_still_in_revised_body(claim: dict[str, Any], article_body: str) -> bool:
+    ct = normalize_claim_key(str(claim.get("text") or ""))
+    if not ct:
+        return False
+    return ct in normalize_claim_key(article_body)
+
+
+def _build_unresolved_remarks_block(
+    fr: dict[str, Any], article_body: str | None = None
+) -> str:
     lines: list[str] = [
         "\n\n---\n【事實查核備註】",
         "以下要點經自動事實查核後仍標示為「與檢索結果不符」或「未能核實」（重要性較高之宣稱），請編輯部同事留意辨識：",
@@ -31,6 +55,8 @@ def _build_unresolved_remarks_block(fr: dict[str, Any]) -> str:
         if _claim_importance(c) < 3:
             continue
         if c.get("status") not in ("contradicted", "uncertain"):
+            continue
+        if article_body is not None and not _claim_still_in_revised_body(c, article_body):
             continue
         text = str(c.get("text") or "").strip()
         reason = str(c.get("reason") or "").strip()
@@ -107,8 +133,14 @@ Revise the draft as instructed in the system prompt."""
             settings,
             **workflow_llm_options(state, settings),
         )
-        body = response.content or ""
-        remarks = _build_unresolved_remarks_block(fr)
+        raw_body = response.content
+        if raw_body is None:
+            body = ""
+        elif isinstance(raw_body, str):
+            body = raw_body
+        else:
+            body = str(raw_body)
+        remarks = _build_unresolved_remarks_block(fr, article_body=body)
         draft_out = body + remarks
         prev_round = int(state.get("fact_check_revision_round") or 0)
         return {
@@ -129,13 +161,17 @@ async def fact_check_remarks_node(state: NewsState) -> dict:
     with the same block (e.g. revision cap after a revise pass).
     """
     draft = state.get("draft", "") or ""
+    stripped = _strip_trailing_remarks_block(draft)
     fr = state.get("fact_check_results") or {}
-    block = _build_unresolved_remarks_block(fr)
+    block = _build_unresolved_remarks_block(fr, article_body=stripped)
     if not block:
+        if stripped != draft:
+            return {"draft": stripped, "status": "fact_check_remarks_skipped"}
         return {"status": "fact_check_remarks_skipped"}
-    if draft.endswith(block):
+    combined = stripped + block
+    if draft == combined:
         return {"status": "fact_check_remarks_skipped"}
     return {
-        "draft": draft + block,
+        "draft": combined,
         "status": "fact_check_remarks_appended",
     }

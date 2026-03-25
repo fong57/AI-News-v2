@@ -60,3 +60,6 @@ htmlcov/
 
 # LangGraph
 .langgraph/
+
+# Streamlit GUI
+app.py

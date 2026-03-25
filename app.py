@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 from langgraph.errors import GraphInterrupt
 from langgraph.pregel.remote import RemoteException, RemoteGraph
 from langgraph.types import Command
+from langgraph_sdk import get_sync_client
 from openai import OpenAI  # reused for compatible APIs (Perplexity/DashScope)
 
 from litenews.config.settings import get_settings
@@ -33,6 +35,22 @@ def _resolve_langgraph_api_key() -> str | None:
         if v and v.strip():
             return v.strip().strip('"').strip("'")
     return None
+
+
+def _get_langgraph_platform_client() -> tuple[Any, str | None]:
+    """Return ``(client, None)`` or ``(None, error_message)`` for LangGraph Platform HTTP API."""
+    base, url_err = _resolve_langgraph_base_url()
+    if url_err:
+        return None, url_err
+    key = _resolve_langgraph_api_key()
+    if not key:
+        return None, (
+            "請設定 `LANGGRAPH_API_KEY`、`LANGSMITH_API_KEY` 或 `LANGCHAIN_API_KEY`。"
+        )
+    try:
+        return get_sync_client(url=base, api_key=key), None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
 
 
 def _resolve_langgraph_base_url() -> tuple[str | None, str | None]:
@@ -106,21 +124,278 @@ authenticator = stauth.Authenticate(
     credentials, "langsmith_cookie", "langsmith_key", 3 * 24 * 60 * 60
 )
 
+# 登入頁（streamlit-authenticator：香港慣用繁體標籤）
+_LOGIN_FIELDS = {
+    "Form name": "登入",
+    "Username": "用戶名稱",
+    "Password": "密碼",
+    "Login": "登入",
+    "Captcha": "驗證碼",
+}
+
 # Login Screen (streamlit-authenticator 0.4+: first arg is location; state lives in session_state)
-authenticator.login(location="main")
+authenticator.login(location="main", fields=_LOGIN_FIELDS)
 authentication_status = st.session_state.get("authentication_status")
 name = st.session_state.get("name")
 username = st.session_state.get("username")
 
 if authentication_status is False:
-    st.error("用戶名稱或密碼錯誤")
+    st.error("用戶名稱或密碼不正確，請再試一次。")
 if authentication_status is None:
-    st.warning("請先登入")
+    st.warning("請先登入以繼續。")
     st.stop()
 
 # Logged-in area
-st.success(f"歡迎，{name}！")
-authenticator.logout("登出", "sidebar")
+st.success(f"歡迎 {name}！")
+
+
+def _welcome_messages() -> list[dict[str, str]]:
+    return [
+        {
+            "role": "assistant",
+            "content": (
+                "你好！輸入 **寫文章** + **主題**，即可執行從資料搜集、撰稿、事實查核到風格校對的AI自動化新聞工作流程。"
+                "我會在重要節點暫停，請你確認下一步行動"
+            ),
+        }
+    ]
+
+
+def _server_thread_placeholder_messages() -> list[dict[str, str]]:
+    return [
+        {
+            "role": "assistant",
+            "content": (
+                "（此對話從 AI傳真優服務器載入。重新整理後，下方聊天僅顯示於本次工作階段；"
+                "工作流程狀態仍由部署端 checkpoint 還原。）"
+            ),
+        }
+    ]
+
+
+def _truncate_preview(text: str, max_len: int = 480) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 1].rstrip() + "…"
+
+
+def _create_langgraph_thread_id() -> tuple[str, bool]:
+    """Create a thread on LangGraph Platform when possible; else a local UUID (remote=False)."""
+    new_id = str(uuid.uuid4())
+    remote = False
+    client, _ = _get_langgraph_platform_client()
+    if not client:
+        return new_id, remote
+    uname = (username or "anonymous").strip() or "anonymous"
+    meta = {"username": uname, "app": "litenews_ai"}
+    t = None
+    try:
+        t = client.threads.create(metadata=meta, graph_id=LANGGRAPH_GRAPH_ID)
+    except Exception:
+        try:
+            t = client.threads.create(metadata=meta)
+        except Exception:
+            t = None
+    if t is not None:
+        if isinstance(t, dict):
+            tid = str(t.get("thread_id") or "")
+        else:
+            tid = str(getattr(t, "thread_id", "") or "")
+        if tid:
+            return tid, True
+    return new_id, remote
+
+
+def _migrate_legacy_session_if_needed() -> None:
+    """One-time: old flat ``messages`` / workflow keys → per-thread storage."""
+    if "threads" in st.session_state:
+        return
+    if "messages" not in st.session_state and not st.session_state.get(
+        "workflow_pending_thread_id"
+    ):
+        return
+    tid = str(uuid.uuid4())
+    bucket: dict[str, Any] = {
+        "messages": st.session_state.pop(
+            "messages",
+            _welcome_messages(),
+        ),
+        "workflow_pending_thread_id": st.session_state.pop(
+            "workflow_pending_thread_id", None
+        ),
+        "workflow_pending_interrupt_id": st.session_state.pop(
+            "workflow_pending_interrupt_id", None
+        ),
+        "workflow_interrupt_context": st.session_state.pop(
+            "workflow_interrupt_context", None
+        ),
+        "title": "新對話",
+        "updated_at": time.time(),
+        "remote": False,
+    }
+    first_user = next(
+        (m["content"] for m in bucket["messages"] if m.get("role") == "user"),
+        "",
+    )
+    if (first_user or "").strip():
+        bucket["title"] = _truncate_preview(first_user.strip(), 36)
+    st.session_state.threads = {tid: bucket}
+    st.session_state.active_thread_id = tid
+
+
+def _ensure_threads_initialized() -> None:
+    _migrate_legacy_session_if_needed()
+    if "threads" not in st.session_state:
+        tid, remote = _create_langgraph_thread_id()
+        st.session_state.threads = {
+            tid: {
+                "messages": _welcome_messages(),
+                "workflow_pending_thread_id": None,
+                "workflow_pending_interrupt_id": None,
+                "workflow_interrupt_context": None,
+                "title": "新對話",
+                "updated_at": time.time(),
+                "remote": remote,
+            }
+        }
+        st.session_state.active_thread_id = tid
+    elif st.session_state.get("active_thread_id") not in st.session_state.threads:
+        st.session_state.active_thread_id = next(iter(st.session_state.threads))
+
+
+def _thread_bucket() -> dict[str, Any]:
+    _ensure_threads_initialized()
+    tid = st.session_state.active_thread_id
+    return st.session_state.threads[tid]
+
+
+def _touch_thread() -> None:
+    b = _thread_bucket()
+    b["updated_at"] = time.time()
+
+
+def _maybe_set_thread_title_from_prompt(prompt: str) -> None:
+    b = _thread_bucket()
+    if (b.get("title") or "") == "新對話" and (prompt or "").strip():
+        b["title"] = _truncate_preview(prompt.strip(), 36)
+
+
+def _thread_id_from_any(obj: Any) -> str:
+    if isinstance(obj, dict):
+        return str(obj.get("thread_id") or "")
+    return str(getattr(obj, "thread_id", "") or "")
+
+
+def _thread_metadata_from_any(obj: Any) -> dict[str, Any]:
+    if isinstance(obj, dict):
+        m = obj.get("metadata")
+    else:
+        m = getattr(obj, "metadata", None)
+    if not isinstance(m, dict):
+        return {}
+    return m
+
+
+def _merge_remote_threads_from_search() -> str | None:
+    """Insert threads from LangGraph Platform ``search`` into session. Returns error text or None."""
+    client, err = _get_langgraph_platform_client()
+    if err or not client:
+        return err or "無法連線至 LangGraph 部署。"
+    uname = (username or "anonymous").strip() or "anonymous"
+    try:
+        found = client.threads.search(
+            metadata={"username": uname},
+            limit=50,
+            offset=0,
+            sort_by="updated_at",
+            sort_order="desc",
+        )
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    _ensure_threads_initialized()
+    for t in found:
+        tid = _thread_id_from_any(t)
+        if not tid:
+            continue
+        md = _thread_metadata_from_any(t)
+        title_src = (md.get("title") or "").strip() or ("AI傳真優 " + tid[:8])
+        if tid in st.session_state.threads:
+            b = st.session_state.threads[tid]
+            b["synced_from_server"] = True
+            b["remote"] = True
+            if md.get("title"):
+                b["title"] = _truncate_preview(str(md["title"]), 48)
+            continue
+        st.session_state.threads[tid] = {
+            "messages": _server_thread_placeholder_messages(),
+            "workflow_pending_thread_id": None,
+            "workflow_pending_interrupt_id": None,
+            "workflow_interrupt_context": None,
+            "title": _truncate_preview(title_src, 48),
+            "updated_at": time.time(),
+            "remote": True,
+            "synced_from_server": True,
+        }
+    return None
+
+
+def _render_thread_sidebar() -> None:
+    _ensure_threads_initialized()
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("對話紀錄")
+    if st.sidebar.button("➕ 新對話", use_container_width=True):
+        new_id, remote = _create_langgraph_thread_id()
+        st.session_state.threads[new_id] = {
+            "messages": _welcome_messages(),
+            "workflow_pending_thread_id": None,
+            "workflow_pending_interrupt_id": None,
+            "workflow_interrupt_context": None,
+            "title": "新對話",
+            "updated_at": time.time(),
+            "remote": remote,
+        }
+        st.session_state.active_thread_id = new_id
+        st.rerun()
+
+    if st.sidebar.button("⬇ 載入對話", use_container_width=True):
+        err = _merge_remote_threads_from_search()
+        if err:
+            st.sidebar.error(err)
+        else:
+            st.rerun()
+    st.sidebar.caption(
+        "列表依登入帳號 username 篩選。"
+        "刷新頁面後請按載入，並選取要還原的對話。"
+    )
+
+    threads_sorted = sorted(
+        st.session_state.threads.items(),
+        key=lambda x: x[1].get("updated_at", 0),
+        reverse=True,
+    )
+    ids = [tid for tid, _ in threads_sorted]
+    cur = st.session_state.active_thread_id
+    if cur not in st.session_state.threads:
+        st.session_state.active_thread_id = ids[0]
+        cur = st.session_state.active_thread_id
+    idx = ids.index(cur)
+    selected = st.sidebar.radio(
+        "選擇對話",
+        options=ids,
+        index=idx,
+        format_func=lambda tid: (st.session_state.threads[tid].get("title") or "新對話")[:48],
+        key="sidebar_thread_select",
+    )
+    if selected != cur:
+        st.session_state.active_thread_id = selected
+        st.rerun()
+
+    authenticator.logout("登出", "sidebar")
+
+
+_ensure_threads_initialized()
+_render_thread_sidebar()
 
 # --------------------------
 # Helpers (defined before Chat UI so human-in-the-loop panels / chat can call them on every rerun)
@@ -144,13 +419,6 @@ def topic_from_workflow_prompt(user_input: str) -> str:
         if rest:
             return rest
     return p
-
-
-def _truncate_preview(text: str, max_len: int = 480) -> str:
-    t = (text or "").strip()
-    if len(t) <= max_len:
-        return t
-    return t[: max_len - 1].rstrip() + "…"
 
 
 def _format_final_article_markdown(fa: Any) -> str:
@@ -330,9 +598,10 @@ def _format_remote_graph_result(result: object, *, show_interrupt_json: bool = T
 
 
 def _clear_workflow_pending() -> None:
-    st.session_state.pop("workflow_pending_thread_id", None)
-    st.session_state.pop("workflow_pending_interrupt_id", None)
-    st.session_state.pop("workflow_interrupt_context", None)
+    b = _thread_bucket()
+    b["workflow_pending_thread_id"] = None
+    b["workflow_pending_interrupt_id"] = None
+    b["workflow_interrupt_context"] = None
 
 
 def _remote_invoke_values(
@@ -406,12 +675,67 @@ def _normalize_revise_human_payload(
 
 
 def _store_workflow_interrupt(thread_id: str, intr_id: str | None, value: Any) -> None:
-    st.session_state.workflow_pending_thread_id = thread_id
-    st.session_state.workflow_pending_interrupt_id = intr_id or None
+    b = _thread_bucket()
+    b["workflow_pending_thread_id"] = thread_id
+    b["workflow_pending_interrupt_id"] = intr_id or None
     if isinstance(value, dict):
-        st.session_state.workflow_interrupt_context = value
+        b["workflow_interrupt_context"] = value
     else:
-        st.session_state.workflow_interrupt_context = {"kind": "unknown", "raw": value}
+        b["workflow_interrupt_context"] = {"kind": "unknown", "raw": value}
+
+
+def _state_values_dict_from_thread_state(ts: Any) -> dict[str, Any]:
+    if isinstance(ts, dict):
+        raw = ts.get("values")
+    else:
+        raw = getattr(ts, "values", None)
+    if raw is None:
+        return {}
+    if isinstance(raw, list):
+        return raw[-1] if raw else {}
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def _hydrate_active_thread_from_langgraph() -> None:
+    """Restore ``workflow_pending_*`` from LangGraph Platform checkpoint for remote threads."""
+    _ensure_threads_initialized()
+    tid = st.session_state.active_thread_id
+    b = st.session_state.threads.get(tid)
+    if not b or not (b.get("remote") or b.get("synced_from_server")):
+        return
+    client, _ = _get_langgraph_platform_client()
+    if not client:
+        return
+    try:
+        ts = client.threads.get_state(tid)
+    except Exception:
+        return
+    values = _state_values_dict_from_thread_state(ts)
+    topic = (values.get("topic") or "").strip()
+    if topic and str(b.get("title") or "").startswith("AI傳真優"):
+        b["title"] = _truncate_preview(topic, 36)
+    intr_raw = values.get("__interrupt__")
+    if intr_raw:
+        parsed = _first_interrupt_entry({"__interrupt__": intr_raw})
+        if parsed:
+            val, iid = parsed
+            _store_workflow_interrupt(tid, iid or None, val)
+            return
+    intrs = ts.get("interrupts") if isinstance(ts, dict) else getattr(ts, "interrupts", None)
+    if intrs:
+        first = intrs[0]
+        if isinstance(first, dict):
+            val = first.get("value")
+            iid = str(first.get("id") or "")
+        else:
+            val = getattr(first, "value", None)
+            iid = str(getattr(first, "id", "") or "")
+        if val is not None:
+            _store_workflow_interrupt(tid, iid or None, val)
+            return
+    _clear_workflow_pending()
 
 
 # --------------------------
@@ -460,7 +784,7 @@ def call_remote_news_graph(
     on_progress: Callable[[str], None] | None = None,
 ) -> str:
     discarded = ""
-    if st.session_state.get("workflow_pending_thread_id"):
+    if _thread_bucket().get("workflow_pending_thread_id"):
         _clear_workflow_pending()
         discarded = "_先前暫停的工作流程已捨棄。_\n\n"
 
@@ -490,7 +814,7 @@ def call_remote_news_graph(
         )
 
     remote = RemoteGraph(LANGGRAPH_GRAPH_ID, url=base, api_key=api_key)
-    run_config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    run_config = {"configurable": {"thread_id": str(st.session_state.active_thread_id)}}
     try:
         result, thread_id = _remote_invoke_values(
             remote, init, config=run_config, on_progress=on_progress
@@ -586,8 +910,9 @@ def resume_remote_news_graph(
     """Resume a paused deployment run after any human-in-the-loop node."""
     base, url_err = _resolve_langgraph_base_url()
     api_key = _resolve_langgraph_api_key()
-    thread_id = st.session_state.get("workflow_pending_thread_id")
-    intr_id = st.session_state.get("workflow_pending_interrupt_id")
+    b = _thread_bucket()
+    thread_id = b.get("workflow_pending_thread_id")
+    intr_id = b.get("workflow_pending_interrupt_id")
 
     if url_err:
         return url_err
@@ -647,28 +972,17 @@ def resume_remote_news_graph(
 # Chat UI
 # --------------------------
 st.title("AI傳真優")
-
-# Chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {
-            "role": "assistant",
-            "content": (
-                "你好！輸入 **寫文章** + **主題**，即可執行從資料搜集、撰稿、事實查核到風格校對的AI自動化新聞工作流程。"
-                "我會在重要節點暫停，請你確認下一步行動"
-            ),
-        }
-    ]
+_hydrate_active_thread_from_langgraph()
 
 # Show messages first so the page reads top-to-bottom; HITL panels render below (near chat input).
-for msg in st.session_state.messages:
+for msg in _thread_bucket()["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 # Human-in-the-loop panels sit above the chat input. After a LangGraph pause we call
 # ``st.rerun()`` so this block runs on the next pass with ``workflow_pending_*`` already set.
-if st.session_state.get("workflow_pending_thread_id"):
-    ctx = st.session_state.get("workflow_interrupt_context") or {}
+if _thread_bucket().get("workflow_pending_thread_id"):
+    ctx = _thread_bucket().get("workflow_interrupt_context") or {}
     kind = ctx.get("kind")
 
     if kind == "configure_review":
@@ -762,9 +1076,10 @@ if st.session_state.get("workflow_pending_thread_id"):
                         on_progress=wf_prog.markdown,
                     )
                 wf_prog.markdown("🔄 **AI傳真優**（已繼續）\n\n" + resumed)
-                st.session_state.messages.append(
+                _thread_bucket()["messages"].append(
                     {"role": "assistant", "content": "🔄 **AI傳真優**（已繼續）\n\n" + resumed}
                 )
+                _touch_thread()
                 st.rerun()
             if cfg_go:
                 wf_prog = st.empty()
@@ -784,9 +1099,10 @@ if st.session_state.get("workflow_pending_thread_id"):
                         on_progress=wf_prog.markdown,
                     )
                 wf_prog.markdown("🔄 **AI傳真優**（已繼續）\n\n" + resumed)
-                st.session_state.messages.append(
+                _thread_bucket()["messages"].append(
                     {"role": "assistant", "content": "🔄 **AI傳真優**（已繼續）\n\n" + resumed}
                 )
+                _touch_thread()
                 st.rerun()
 
     elif kind == "edit_draft_review":
@@ -834,9 +1150,10 @@ if st.session_state.get("workflow_pending_thread_id"):
                             on_progress=wf_prog.markdown,
                         )
                     wf_prog.markdown("🔄 **AI傳真優**（已繼續）\n\n" + resumed)
-                    st.session_state.messages.append(
+                    _thread_bucket()["messages"].append(
                         {"role": "assistant", "content": "🔄 **AI傳真優**（已繼續）\n\n" + resumed}
                     )
+                    _touch_thread()
                     st.rerun()
 
     elif kind == "outline_review":
@@ -878,9 +1195,10 @@ if st.session_state.get("workflow_pending_thread_id"):
                         on_progress=wf_prog.markdown,
                     )
                 wf_prog.markdown("🔄 **AI傳真優**（已繼續）\n\n" + resumed)
-                st.session_state.messages.append(
+                _thread_bucket()["messages"].append(
                     {"role": "assistant", "content": "🔄 **AI傳真優**（已繼續）\n\n" + resumed}
                 )
+                _touch_thread()
                 st.rerun()
             if replace_go:
                 text = (replacement or "").strip()
@@ -894,9 +1212,10 @@ if st.session_state.get("workflow_pending_thread_id"):
                             on_progress=wf_prog.markdown,
                         )
                     wf_prog.markdown("🔄 **AI傳真優**（已繼續）\n\n" + resumed)
-                    st.session_state.messages.append(
+                    _thread_bucket()["messages"].append(
                         {"role": "assistant", "content": "🔄 **AI傳真優**（已繼續）\n\n" + resumed}
                     )
+                    _touch_thread()
                     st.rerun()
 
     elif kind == "revise_review":
@@ -918,9 +1237,9 @@ if st.session_state.get("workflow_pending_thread_id"):
                 "下一步要怎麼做？",
                 ["accept", "feedback", "replace"],
                 format_func=lambda v: {
-                    "accept": "接受草稿並繼續至審閱",
+                    "accept": "接受此修改稿並繼續至最終審閱",
                     "feedback": "提供意見並請 AI 再修訂一輪",
-                    "replace": "貼上我自行修訂的草稿並繼續至審閱",
+                    "replace": "貼上我自行修訂的草稿並繼續至最終審閱",
                 }[v],
                 key="wf_revise_decision",
             )
@@ -966,9 +1285,10 @@ if st.session_state.get("workflow_pending_thread_id"):
                             on_progress=wf_prog.markdown,
                         )
                     wf_prog.markdown("🔄 **AI傳真優**（已繼續）\n\n" + resumed)
-                    st.session_state.messages.append(
+                    _thread_bucket()["messages"].append(
                         {"role": "assistant", "content": "🔄 **AI傳真優**（已繼續）\n\n" + resumed}
                     )
+                    _touch_thread()
                     st.rerun()
 
     else:
@@ -985,7 +1305,9 @@ if st.session_state.get("workflow_pending_thread_id"):
 # Chat Input
 # --------------------------
 if prompt := st.chat_input("輸入訊息…"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    _maybe_set_thread_title_from_prompt(prompt)
+    _thread_bucket()["messages"].append({"role": "user", "content": prompt})
+    _touch_thread()
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -999,12 +1321,14 @@ if prompt := st.chat_input("輸入訊息…"):
                     on_progress=progress_slot.markdown,
                 )
             else:
-                resp = call_general_llm(prompt)
+                # General LLM chat suspended — no API call
+                resp = "LLM對話功能暫時停用"
         if use_workflow:
             progress_slot.markdown("🔄 **AI傳真優 已啟動**\n\n" + resp)
         else:
             progress_slot.markdown(resp)
 
-    st.session_state.messages.append({"role": "assistant", "content": resp})
-    if use_workflow and st.session_state.get("workflow_pending_thread_id"):
+    _thread_bucket()["messages"].append({"role": "assistant", "content": resp})
+    _touch_thread()
+    if use_workflow and _thread_bucket().get("workflow_pending_thread_id"):
         st.rerun()
