@@ -74,6 +74,43 @@ class TestResearchNode:
         assert result["status"] == "researched"
 
     @pytest.mark.asyncio
+    async def test_filters_blocked_domains_from_search_results(
+        self, base_state, mock_settings
+    ):
+        """Blocked hosts must not appear in search_results or pool."""
+        base_state["topic"] = "AI"
+        mixed = [
+            {
+                "title": "Keep",
+                "url": "https://keep.test/article",
+                "content": "ok",
+            },
+            {
+                "title": "Drop",
+                "url": "https://blocked.test/x",
+                "content": "no",
+            },
+        ]
+        settings = mock_settings.model_copy(
+            update={"tavily_exclude_domains": ["blocked.test"]}
+        )
+        mock_search_tool = AsyncMock()
+        mock_search_tool.ainvoke = AsyncMock(return_value={"results": mixed})
+
+        with patch("litenews.workflow.nodes.research.get_settings", return_value=settings), \
+             patch(
+                 "litenews.workflow.nodes.research.get_tavily_search_tool",
+                 return_value=mock_search_tool,
+             ):
+            result = await research_node(base_state)
+
+        assert result["status"] == "researched"
+        assert len(result["search_results"]) == 1
+        assert result["search_results"][0]["url"] == "https://keep.test/article"
+        pool = result.get("tavily_evidence_pool") or []
+        assert all("blocked.test" not in (r.get("url") or "") for r in pool)
+
+    @pytest.mark.asyncio
     async def test_returns_search_results_as_list(self, base_state, mock_settings, mock_search_results):
         """Test that it returns search results when results is a list."""
         base_state["topic"] = "AI"
@@ -203,6 +240,20 @@ class TestResearchNode:
         assert result["status"] == "error"
         assert "Research failed" in result["error"]
         assert "Search API error" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_string_response(self, base_state, mock_settings):
+        """String payloads from Tavily are treated as API error text."""
+        base_state["topic"] = "AI"
+        mock_search_tool = AsyncMock()
+        mock_search_tool.ainvoke = AsyncMock(return_value="Rate limit exceeded")
+
+        with patch("litenews.workflow.nodes.research.get_settings", return_value=mock_settings), \
+             patch("litenews.workflow.nodes.research.get_tavily_search_tool", return_value=mock_search_tool):
+            result = await research_node(base_state)
+
+        assert result["status"] == "error"
+        assert "Rate limit exceeded" in result["error"]
 
     @pytest.mark.asyncio
     async def test_invokes_search_tool_with_query(self, base_state, mock_settings, mock_search_results):

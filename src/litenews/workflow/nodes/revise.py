@@ -1,6 +1,7 @@
 """Revise draft after fact-check; append unresolved-claim editor remarks on every revise output."""
 
 import json
+import unicodedata
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,6 +25,41 @@ _REMARKS_BLOCK_START = "\n\n---\n【事實查核備註】"
 _REMARKS_BLOCK_START_ALT = "\n---\n【事實查核備註】"
 
 
+def _llm_content_to_str(content: Any) -> str:
+    """Turn AIMessage.content into plain text (handles str or provider-specific block lists)."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text" and block.get("text") is not None:
+                    parts.append(str(block.get("text", "")))
+                    continue
+                if block.get("text") is not None:
+                    parts.append(str(block.get("text", "")))
+                    continue
+                nested = block.get("content")
+                if isinstance(nested, str):
+                    parts.append(nested)
+                elif nested is not None:
+                    parts.append(_llm_content_to_str(nested))
+                else:
+                    parts.append(str(block))
+            else:
+                parts.append(str(block))
+        return "".join(parts)
+    if isinstance(content, dict):
+        nested = content.get("content") or content.get("text")
+        if nested is not None:
+            return _llm_content_to_str(nested)
+    return str(content)
+
+
 def _strip_trailing_remarks_block(draft: str) -> str:
     """Return article body without a trailing 【事實查核備註】 section, if present."""
     if not draft:
@@ -36,19 +72,15 @@ def _strip_trailing_remarks_block(draft: str) -> str:
 
 
 def _claim_still_in_revised_body(claim: dict[str, Any], article_body: str) -> bool:
-    ct = normalize_claim_key(str(claim.get("text") or ""))
+    ct = normalize_claim_key(unicodedata.normalize("NFKC", str(claim.get("text") or "")))
     if not ct:
         return False
-    return ct in normalize_claim_key(article_body)
+    an = normalize_claim_key(unicodedata.normalize("NFKC", article_body or ""))
+    return ct in an
 
 
-def _build_unresolved_remarks_block(
-    fr: dict[str, Any], article_body: str | None = None
-) -> str:
-    lines: list[str] = [
-        "\n\n---\n【事實查核備註】",
-        "以下要點經自動事實查核後仍標示為「與檢索結果不符」或「未能核實」（重要性較高之宣稱），請編輯部同事留意辨識：",
-    ]
+def _eligible_remark_claims(fr: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for c in fr.get("claims") or []:
         if not isinstance(c, dict):
             continue
@@ -56,13 +88,46 @@ def _build_unresolved_remarks_block(
             continue
         if c.get("status") not in ("contradicted", "uncertain"):
             continue
-        if article_body is not None and not _claim_still_in_revised_body(c, article_body):
-            continue
+        out.append(c)
+    return out
+
+
+def _remarks_lines_for_claims(claims: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = [
+        "\n\n---\n【事實查核備註】",
+        "以下要點經自動事實查核後仍標示為「與檢索結果不符」或「未能核實」（重要性較高之宣稱），請編輯部同事留意辨識：",
+    ]
+    for c in claims:
         text = str(c.get("text") or "").strip()
         reason = str(c.get("reason") or "").strip()
         status_zh = "與檢索結果不符" if c.get("status") == "contradicted" else "未能核實"
         suffix = f" — {reason}" if reason else ""
         lines.append(f"- （{status_zh}）{text}{suffix}")
+    return lines
+
+
+def _build_unresolved_remarks_block(
+    fr: dict[str, Any],
+    article_body: str | None = None,
+    *,
+    substring_miss_fallback: bool = True,
+) -> str:
+    eligible = _eligible_remark_claims(fr)
+    if not eligible:
+        return ""
+    if article_body is None:
+        claims_to_show = eligible
+    else:
+        matched = [c for c in eligible if _claim_still_in_revised_body(c, article_body)]
+        if matched:
+            claims_to_show = matched
+        elif substring_miss_fallback:
+            # Revise usually rewrites contradict/uncertain wording, so exact substring often
+            # misses; if nothing matches, show all eligible so editors still see the list.
+            claims_to_show = eligible
+        else:
+            claims_to_show = []
+    lines = _remarks_lines_for_claims(claims_to_show)
     if len(lines) <= 2:
         return ""
     return "\n".join(lines)
@@ -133,14 +198,14 @@ Revise the draft as instructed in the system prompt."""
             settings,
             **workflow_llm_options(state, settings),
         )
-        raw_body = response.content
-        if raw_body is None:
-            body = ""
-        elif isinstance(raw_body, str):
-            body = raw_body
-        else:
-            body = str(raw_body)
-        remarks = _build_unresolved_remarks_block(fr, article_body=body)
+        body = _llm_content_to_str(response.content)
+        if not (body or "").strip():
+            raw_text = getattr(response, "text", None)
+            if raw_text:
+                body = str(raw_text)
+        remarks = _build_unresolved_remarks_block(
+            fr, article_body=body, substring_miss_fallback=True
+        )
         draft_out = body + remarks
         prev_round = int(state.get("fact_check_revision_round") or 0)
         return {
@@ -163,7 +228,9 @@ async def fact_check_remarks_node(state: NewsState) -> dict:
     draft = state.get("draft", "") or ""
     stripped = _strip_trailing_remarks_block(draft)
     fr = state.get("fact_check_results") or {}
-    block = _build_unresolved_remarks_block(fr, article_body=stripped)
+    block = _build_unresolved_remarks_block(
+        fr, article_body=stripped, substring_miss_fallback=False
+    )
     if not block:
         if stripped != draft:
             return {"draft": stripped, "status": "fact_check_remarks_skipped"}

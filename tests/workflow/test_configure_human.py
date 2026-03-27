@@ -20,6 +20,9 @@ class _DummySettings:
     def has_qwen_key(self) -> bool:
         return True
 
+    def has_bailian_key(self) -> bool:
+        return True
+
 
 @pytest.fixture
 def dummy_settings(monkeypatch):

@@ -5,6 +5,52 @@ from __future__ import annotations
 import hashlib
 import re
 from typing import Any
+from urllib.parse import urlparse
+
+
+def _host_matches_blocked(hostname: str, blocked: frozenset[str]) -> bool:
+    """True if hostname equals or is a subdomain of any blocked registrable-style entry."""
+    h = hostname.lower()
+    if h.startswith("www."):
+        h = h[4:]
+    for b in blocked:
+        if not b:
+            continue
+        if h == b or h.endswith("." + b):
+            return True
+    return False
+
+
+def filter_blocked_tavily_rows(
+    rows: list[Any],
+    blocked_domains: list[str] | frozenset[str] | set[str] | None,
+) -> list[Any]:
+    """Drop Tavily result dicts whose URL host matches blocked_domains (suffix / subdomain rule)."""
+    if not rows:
+        return []
+    if not blocked_domains:
+        return list(rows)
+    blocked = frozenset(
+        str(d).strip().lower().lstrip(".")
+        for d in blocked_domains
+        if d is not None and str(d).strip()
+    )
+    if not blocked:
+        return list(rows)
+    out: list[Any] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            out.append(r)
+            continue
+        url = r.get("url")
+        if not url or not str(url).strip():
+            out.append(r)
+            continue
+        host = urlparse(str(url).strip()).hostname
+        if host and _host_matches_blocked(host, blocked):
+            continue
+        out.append(r)
+    return out
 
 
 def normalize_raw_tavily_result(r: Any) -> dict[str, Any]:

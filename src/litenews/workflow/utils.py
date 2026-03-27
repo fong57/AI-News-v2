@@ -55,7 +55,7 @@ async def invoke_llm_with_messages(
     Args:
         messages: The messages to send to the LLM.
         settings: Optional settings object. If not provided, will fetch from get_settings().
-        llm_provider: Optional perplexity/qwen override (defaults to settings.primary_llm).
+        llm_provider: Optional provider override (defaults to settings.primary_llm).
         llm_model: Optional model id for that provider (defaults to env settings for provider).
         
     Returns:

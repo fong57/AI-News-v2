@@ -19,6 +19,7 @@ class LLMConfig:
     api_key: str
     max_tokens: int = 4096
     temperature: float = 0.7
+    api_base: str | None = None
     extra_params: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +70,19 @@ def get_qwen_config(settings: Settings | None = None) -> LLMConfig:
     )
 
 
+def get_bailian_config(settings: Settings | None = None) -> LLMConfig:
+    """Get Alibaba Bailian (Model Studio) OpenAI-compatible API configuration."""
+    settings = settings or get_settings()
+    return LLMConfig(
+        provider="bailian",
+        model=settings.bailian_model,
+        api_key=settings.bailian_api_key,
+        max_tokens=settings.max_tokens,
+        temperature=settings.temperature,
+        api_base=settings.bailian_api_base,
+    )
+
+
 def get_llm_config(provider: str | None = None, settings: Settings | None = None) -> LLMConfig:
     """Get LLM configuration for the specified provider.
     
@@ -89,5 +103,10 @@ def get_llm_config(provider: str | None = None, settings: Settings | None = None
         return get_perplexity_config(settings)
     elif provider == "qwen":
         return get_qwen_config(settings)
+    elif provider == "bailian":
+        return get_bailian_config(settings)
     else:
-        raise ValueError(f"Unsupported LLM provider: {provider}. Use 'perplexity' or 'qwen'.")
+        raise ValueError(
+            f"Unsupported LLM provider: {provider}. "
+            "Use 'perplexity', 'qwen', or 'bailian'."
+        )

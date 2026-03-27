@@ -1,6 +1,8 @@
 """Tests for Tavily search integration."""
 
 import os
+from unittest.mock import patch
+
 import pytest
 
 from litenews.config.settings import Settings
@@ -68,7 +70,8 @@ class TestSearchConfiguration:
         assert settings.tavily_research_max_results == 20
         assert settings.tavily_fact_check_max_results == 10
         assert settings.tavily_write_max_results == 5
-    
+        assert settings.tavily_exclude_domains == []
+
     def test_custom_settings(self):
         """Test custom per-node max results and shared depth/topic."""
         settings = Settings(
@@ -84,3 +87,29 @@ class TestSearchConfiguration:
         assert settings.tavily_research_max_results == 15
         assert settings.tavily_fact_check_max_results == 8
         assert settings.tavily_write_max_results == 4
+
+    def test_tavily_exclude_domains_parsed_from_string(self):
+        settings = Settings(
+            _env_file=None,
+            tavily_exclude_domains="Foo.COM , .bar.org ",
+        )
+        assert settings.tavily_exclude_domains == ["foo.com", "bar.org"]
+
+
+def test_get_tavily_search_tool_passes_exclude_domains():
+    settings = Settings(
+        _env_file=None,
+        tavily_api_key="k",
+        tavily_exclude_domains=["spam.com", "evil.net"],
+    )
+    with patch("litenews.tools.search.TavilySearch") as mock_ts:
+        get_tavily_search_tool(settings)
+    kwargs = mock_ts.call_args.kwargs
+    assert kwargs["exclude_domains"] == ["spam.com", "evil.net"]
+
+
+def test_get_tavily_search_tool_omits_exclude_when_empty():
+    settings = Settings(_env_file=None, tavily_api_key="k")
+    with patch("litenews.tools.search.TavilySearch") as mock_ts:
+        get_tavily_search_tool(settings)
+    assert "exclude_domains" not in mock_ts.call_args.kwargs

@@ -30,8 +30,10 @@ async def configure_workflow_node(state: NewsState) -> dict:
         llm_provider: LLMProvider = settings.primary_llm
     else:
         s = str(raw_lp).strip().lower()
-        if s not in ("perplexity", "qwen"):
-            return create_error_response("llm_provider must be 'perplexity' or 'qwen'")
+        if s not in ("perplexity", "qwen", "bailian"):
+            return create_error_response(
+                "llm_provider must be 'perplexity', 'qwen', or 'bailian'"
+            )
         llm_provider = cast(LLMProvider, s)
 
     raw_lm = state.get("llm_model")
@@ -39,11 +41,15 @@ async def configure_workflow_node(state: NewsState) -> dict:
 
     if llm_provider == "perplexity" and not settings.has_perplexity_key():
         return create_error_response(
-            "Perplexity API key is missing; set PPLX_API_KEY or choose qwen."
+            "Perplexity API key is missing; set PPLX_API_KEY or choose qwen or bailian."
         )
     if llm_provider == "qwen" and not settings.has_qwen_key():
         return create_error_response(
-            "DashScope API key is missing; set DASHSCOPE_API_KEY or choose perplexity."
+            "DashScope API key is missing; set DASHSCOPE_API_KEY or choose another provider."
+        )
+    if llm_provider == "bailian" and not settings.has_bailian_key():
+        return create_error_response(
+            "Bailian API key is missing; set BAILIAN_API_KEY or choose another provider."
         )
 
     raw_task = state.get("task")

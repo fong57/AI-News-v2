@@ -18,6 +18,7 @@ from litenews.workflow.fact_check_diff import (
 )
 from litenews.workflow.nodes.research import _parse_search_response
 from litenews.workflow.tavily_pool import (
+    filter_blocked_tavily_rows,
     merge_into_pool,
     normalize_raw_tavily_result,
     select_evidence_for_claim,
@@ -240,6 +241,10 @@ async def _verify_claim_rows(
                 search_rows: list[Any] = []
             else:
                 search_rows = batch
+
+            search_rows = filter_blocked_tavily_rows(
+                search_rows, settings.tavily_exclude_domains
+            )
 
             evidence = [_normalize_evidence_row(r) for r in search_rows]
             cache[claim_text] = [dict(e) for e in evidence]

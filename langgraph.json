@@ -3,6 +3,7 @@
     ".",
     "langchain-perplexity",
     "langchain-qwq",
+    "langchain-openai",
     "langchain-tavily"
   ],
   "graphs": {

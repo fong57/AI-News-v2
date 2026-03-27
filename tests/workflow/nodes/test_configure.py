@@ -13,6 +13,7 @@ async def test_configure_applies_defaults():
     settings = Settings(
         pplx_api_key="k",
         dashscope_api_key="k",
+        bailian_api_key="k",
         tavily_api_key="k",
         primary_llm="qwen",
     )
@@ -32,6 +33,7 @@ async def test_configure_invalid_task():
     settings = Settings(
         pplx_api_key="k",
         dashscope_api_key="k",
+        bailian_api_key="k",
         tavily_api_key="k",
     )
     state = {"article_type": "其他", "task": "bogus"}
@@ -46,6 +48,7 @@ async def test_configure_invalid_provider():
     settings = Settings(
         pplx_api_key="k",
         dashscope_api_key="k",
+        bailian_api_key="k",
         tavily_api_key="k",
     )
     state = {"article_type": "其他", "llm_provider": "openai"}
@@ -60,6 +63,7 @@ async def test_configure_missing_perplexity_key():
     settings = Settings(
         pplx_api_key="",
         dashscope_api_key="k",
+        bailian_api_key="k",
         tavily_api_key="k",
         primary_llm="perplexity",
     )
@@ -68,3 +72,19 @@ async def test_configure_missing_perplexity_key():
         out = await configure_workflow_node(state)
     assert out["status"] == "error"
     assert "Perplexity" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_configure_missing_bailian_key():
+    settings = Settings(
+        pplx_api_key="k",
+        dashscope_api_key="k",
+        bailian_api_key="",
+        tavily_api_key="k",
+        primary_llm="bailian",
+    )
+    state = {"article_type": "其他", "llm_provider": "bailian"}
+    with patch("litenews.workflow.nodes.configure.get_settings", return_value=settings):
+        out = await configure_workflow_node(state)
+    assert out["status"] == "error"
+    assert "Bailian" in out["error"]

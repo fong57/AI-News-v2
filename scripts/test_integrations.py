@@ -21,6 +21,7 @@ load_dotenv()
 
 from litenews.config.settings import get_settings, reload_settings
 from litenews.config.tracing import test_langsmith_connection, get_tracing_status
+from litenews.llms.bailian import test_bailian_connection
 from litenews.llms.perplexity import test_perplexity_connection
 from litenews.llms.qwen import test_qwen_connection
 from litenews.tools.search import verify_tavily_connection
@@ -76,6 +77,20 @@ def test_qwen():
     return test_qwen_connection(
         api_key=settings.dashscope_api_key,
         model=settings.qwen_model,
+    )
+
+
+def test_bailian():
+    """Test Alibaba Bailian compatible-mode API connection."""
+    settings = get_settings()
+
+    if not settings.has_bailian_key():
+        return {"status": "skipped", "error": "BAILIAN_API_KEY not configured"}
+
+    return test_bailian_connection(
+        settings.bailian_api_key,
+        model=settings.bailian_model,
+        api_base=settings.bailian_api_base,
     )
 
 
@@ -139,6 +154,7 @@ def main():
     print(f"  Primary LLM: {settings.primary_llm}")
     print(f"  Perplexity Model: {settings.perplexity_model}")
     print(f"  Qwen Model: {settings.qwen_model}")
+    print(f"  Bailian Model: {settings.bailian_model}")
     print(f"  Search Depth: {settings.tavily_search_depth}")
     print(
         "  Tavily max results (research / fact-check / write): "
@@ -159,17 +175,22 @@ def main():
     result = test_qwen()
     print_result("Qwen/DashScope API", result)
     qwen_ok = result.get("status") == "success"
+
+    print("\n3. Testing Bailian (compatible-mode)...")
+    result = test_bailian()
+    print_result("Bailian API", result)
+    bailian_ok = result.get("status") == "success"
     
     print_header("Testing Search")
     
-    print("\n3. Testing Tavily Search...")
+    print("\n4. Testing Tavily Search...")
     result = test_tavily()
     print_result("Tavily Search API", result)
     tavily_ok = result.get("status") == "success"
     
     print_header("Testing Observability")
     
-    print("\n4. Testing LangSmith...")
+    print("\n5. Testing LangSmith...")
     result = test_langsmith()
     print_result("LangSmith API", result)
     langsmith_ok = result.get("status") == "success"
@@ -180,17 +201,19 @@ def main():
     
     print_header("Testing Workflow")
     
-    print("\n5. Testing Research Node...")
+    print("\n6. Testing Research Node...")
     result = asyncio.run(test_full_workflow())
     print_result("Research Node", result)
     workflow_ok = result.get("status") == "success"
     
     print_header("Summary")
     
-    all_ok = all([perplexity_ok or qwen_ok, tavily_ok])
+    any_llm = perplexity_ok or qwen_ok or bailian_ok
+    all_ok = all([any_llm, tavily_ok])
     
     print(f"\n  Perplexity:  {'✓ Ready' if perplexity_ok else '✗ Not configured/failed'}")
     print(f"  Qwen:        {'✓ Ready' if qwen_ok else '✗ Not configured/failed'}")
+    print(f"  Bailian:     {'✓ Ready' if bailian_ok else '✗ Not configured/failed'}")
     print(f"  Tavily:      {'✓ Ready' if tavily_ok else '✗ Not configured/failed'}")
     print(f"  LangSmith:   {'✓ Ready' if langsmith_ok else '○ Optional (not configured)'}")
     print(f"  Workflow:    {'✓ Ready' if workflow_ok else '✗ Not configured/failed'}")
@@ -200,7 +223,7 @@ def main():
         if langsmith_ok:
             print("  LangSmith tracing is enabled for observability.")
         print("  You can now run: langgraph dev")
-    elif perplexity_ok or qwen_ok:
+    elif any_llm:
         print("\n⚠ At least one LLM is configured.")
         if not tavily_ok:
             print("  Configure TAVILY_API_KEY for search functionality.")

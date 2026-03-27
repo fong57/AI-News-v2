@@ -15,6 +15,7 @@ def mock_settings():
     return Settings(
         pplx_api_key="test_pplx_key",
         dashscope_api_key="test_dashscope_key",
+        bailian_api_key="test_bailian_key",
         tavily_api_key="test_tavily_key",
     )
 
@@ -78,6 +79,7 @@ def base_state():
         "outline": "",
         "draft": "",
         "final_article": None,
+        "published_article": None,
         "feedback": "",
         "status": "initialized",
         "error": "",

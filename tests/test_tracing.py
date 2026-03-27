@@ -8,7 +8,7 @@ from litenews.config.tracing import (
     setup_tracing,
     disable_tracing,
     get_tracing_status,
-    test_langsmith_connection,
+    test_langsmith_connection as langsmith_health_check,
 )
 
 
@@ -83,10 +83,10 @@ class TestLangSmithConnection:
     
     def test_connection(self, api_key):
         """Test LangSmith API connection."""
-        result = test_langsmith_connection(api_key)
+        result = langsmith_health_check(api_key)
         assert result["status"] == "success", f"Connection failed: {result.get('error')}"
     
     def test_invalid_key(self):
         """Test that invalid key returns error."""
-        result = test_langsmith_connection("invalid_key_12345")
+        result = langsmith_health_check("invalid_key_12345")
         assert result["status"] == "error"

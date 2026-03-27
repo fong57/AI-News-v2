@@ -70,8 +70,10 @@ def _validate_merged_configure(state: NewsState) -> dict:
     if not isinstance(raw_lp, str) or not raw_lp.strip():
         return create_error_response("Configure review: llm_provider is required")
     s = raw_lp.strip().lower()
-    if s not in ("perplexity", "qwen"):
-        return create_error_response("Configure review: llm_provider must be 'perplexity' or 'qwen'")
+    if s not in ("perplexity", "qwen", "bailian"):
+        return create_error_response(
+            "Configure review: llm_provider must be 'perplexity', 'qwen', or 'bailian'"
+        )
     llm_provider = cast(LLMProvider, s)
 
     raw_lm = state.get("llm_model")
@@ -79,11 +81,15 @@ def _validate_merged_configure(state: NewsState) -> dict:
 
     if llm_provider == "perplexity" and not settings.has_perplexity_key():
         return create_error_response(
-            "Configure review: Perplexity API key is missing; set PPLX_API_KEY or choose qwen."
+            "Configure review: Perplexity API key is missing; set PPLX_API_KEY or choose another provider."
         )
     if llm_provider == "qwen" and not settings.has_qwen_key():
         return create_error_response(
-            "Configure review: DashScope API key is missing; set DASHSCOPE_API_KEY or choose perplexity."
+            "Configure review: DashScope API key is missing; set DASHSCOPE_API_KEY or choose another provider."
+        )
+    if llm_provider == "bailian" and not settings.has_bailian_key():
+        return create_error_response(
+            "Configure review: Bailian API key is missing; set BAILIAN_API_KEY or choose another provider."
         )
 
     query = state.get("query")
@@ -182,7 +188,7 @@ def configure_human_node(state: NewsState) -> dict:
         "resume_help": (
             "To continue without changes: resume with {'action': 'accept'} or the string 'accept'. "
             "To adjust: resume with {'action': 'confirm', 'topic': '...', 'article_type': '...', "
-            "'target_word_count': <int>, 'llm_provider': 'perplexity'|'qwen', "
+            "'target_word_count': <int>, 'llm_provider': 'perplexity'|'qwen'|'bailian', "
             "'llm_model': '...', 'query': '...', 'task': 'write'|'edit'} — include only keys you want to change. "
             "task 'write' runs research→outline→draft; 'edit' skips to a human draft step then fact-check."
         ),

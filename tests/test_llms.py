@@ -4,8 +4,8 @@ import os
 import pytest
 
 from litenews.config.settings import Settings
-from litenews.llms.perplexity import test_perplexity_connection
-from litenews.llms.qwen import test_qwen_connection
+from litenews.llms.perplexity import test_perplexity_connection as perplexity_health_check
+from litenews.llms.qwen import test_qwen_connection as qwen_health_check
 from litenews.llms.base import get_llm
 
 
@@ -22,7 +22,7 @@ class TestPerplexityIntegration:
     
     def test_connection(self, api_key):
         """Test basic Perplexity API connection."""
-        result = test_perplexity_connection(api_key, model="sonar")
+        result = perplexity_health_check(api_key, model="sonar")
         assert result["status"] == "success", f"Connection failed: {result.get('error')}"
         assert "response" in result
     
@@ -50,7 +50,7 @@ class TestQwenIntegration:
     
     def test_connection(self, api_key):
         """Test basic Qwen API connection."""
-        result = test_qwen_connection(api_key, model="qwen-turbo")
+        result = qwen_health_check(api_key, model="qwen-turbo")
         assert result["status"] == "success", f"Connection failed: {result.get('error')}"
         assert "response" in result
     
@@ -79,6 +79,13 @@ class TestLLMFactory:
         settings = Settings(dashscope_api_key="test_key")
         llm = get_llm("qwen", settings)
         assert llm.config.provider == "qwen"
+
+    def test_get_llm_bailian(self):
+        """Test getting Bailian LLM."""
+        settings = Settings(bailian_api_key="test_key")
+        llm = get_llm("bailian", settings)
+        assert llm.config.provider == "bailian"
+        assert llm.config.api_base
     
     def test_get_llm_invalid(self):
         """Test invalid provider raises error."""

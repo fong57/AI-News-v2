@@ -33,6 +33,7 @@ class TestCreateNewsGraph:
             "revise_human",
             "fact_check_remarks",
             "review",
+            "publish",
         }
 
         for node in expected_nodes:
@@ -48,14 +49,23 @@ class TestCreateNewsGraph:
         assert len(start_edges) == 1
         assert start_edges[0][1] == "configure"
 
-    def test_graph_has_end_edge_from_review(self):
-        """Test that the review node can end the graph."""
+    def test_graph_has_edge_review_to_publish(self):
+        """Test that review flows into publish."""
         graph = create_news_graph()
 
         edges = graph.get_graph().edges
         review_edges = [e for e in edges if e[0] == "review"]
 
-        assert any(e[1] == "__end__" for e in review_edges)
+        assert any(e[1] == "publish" for e in review_edges)
+
+    def test_graph_has_end_edge_from_publish(self):
+        """Test that the publish node ends the graph."""
+        graph = create_news_graph()
+
+        edges = graph.get_graph().edges
+        publish_edges = [e for e in edges if e[0] == "publish"]
+
+        assert any(e[1] == "__end__" for e in publish_edges)
 
     def test_graph_nodes_are_callable(self):
         """Test that each node is invocable (raw callable or LangGraph PregelNode with bound)."""
@@ -84,6 +94,7 @@ class TestCreateNewsGraph:
             "fact_check",
             "revise",
             "revise_human",
+            "publish",
         }
         for node in nodes_with_conditional_edges:
             node_edges = [e for e in edges if e[0] == node]

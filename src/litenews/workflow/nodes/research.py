@@ -8,7 +8,7 @@ from typing import Any
 from litenews.config.settings import get_settings
 from litenews.state.news_state import NewsState, validate_article_type
 from litenews.tools.search import get_tavily_search_tool
-from litenews.workflow.tavily_pool import merge_into_pool
+from litenews.workflow.tavily_pool import filter_blocked_tavily_rows, merge_into_pool
 from litenews.workflow.utils import create_error_response
 
 
@@ -30,6 +30,8 @@ def _parse_search_response(raw: Any) -> tuple[list[Any], str | None]:
         return list(raw.get("results") or []), None
     if isinstance(raw, list):
         return raw, None
+    if isinstance(raw, str):
+        return [], _normalize_tavily_error(raw)
     return [], f"unexpected response type: {type(raw).__name__}"
 
 
@@ -81,6 +83,10 @@ async def research_node(state: NewsState) -> dict:
 
         if api_error:
             return create_error_response(f"Research failed (Tavily): {api_error}")
+
+        search_results = filter_blocked_tavily_rows(
+            search_results, settings.tavily_exclude_domains
+        )
 
         if not search_results:
             return create_error_response(

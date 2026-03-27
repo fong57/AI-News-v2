@@ -16,6 +16,7 @@ from litenews.workflow.nodes import (
     fact_check_node,
     outline_human_node,
     outline_node,
+    publish_node,
     research_node,
     review_node,
     revise_human_node,
@@ -53,6 +54,7 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
     8. Revise (human): Human decides to accept, give feedback for another revise loop,
        or replace draft manually
     9. Review: Polish and finalize the article
+    10. Publish: Produce a clean public version (no fact-check notes or source attribution) for pasting to platforms
 
     Each step has error handling that will terminate the workflow
     if an error occurs.
@@ -75,6 +77,7 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
     workflow.add_node("revise_human", revise_human_node)
     workflow.add_node("fact_check_remarks", fact_check_remarks_node)
     workflow.add_node("review", review_node)
+    workflow.add_node("publish", publish_node)
 
     workflow.add_edge(START, "configure")
     workflow.add_conditional_edges(
@@ -138,6 +141,11 @@ def create_news_graph(*, checkpointer: Checkpointer | None = None) -> StateGraph
         {"error": END, "revise": "revise", "review": "review"},
     )
     workflow.add_edge("fact_check_remarks", "review")
-    workflow.add_edge("review", END)
+    workflow.add_edge("review", "publish")
+    workflow.add_conditional_edges(
+        "publish",
+        should_continue,
+        {"continue": END, "error": END},
+    )
 
     return workflow.compile(checkpointer=checkpointer)

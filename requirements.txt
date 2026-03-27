@@ -10,6 +10,7 @@ langsmith>=0.1.0
 # LLM Integrations
 langchain-perplexity>=1.1.0
 langchain-qwq>=0.1.0
+langchain-openai>=0.2.0
 
 # Search
 langchain-tavily>=0.1.0

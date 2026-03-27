@@ -106,7 +106,7 @@ def get_llm(
     """Factory function to get an LLM instance.
     
     Args:
-        provider: LLM provider name ('perplexity' or 'qwen'). 
+        provider: LLM provider name ('perplexity', 'qwen', or 'bailian').
                   If None, uses primary_llm from settings.
         settings: Optional settings instance.
         model_override: If set, use this model id instead of the env default for the provider.
@@ -117,6 +117,7 @@ def get_llm(
     Raises:
         ValueError: If provider is not supported.
     """
+    from litenews.llms.bailian import BailianLLM
     from litenews.llms.perplexity import PerplexityLLM
     from litenews.llms.qwen import QwenLLM
     
@@ -131,5 +132,7 @@ def get_llm(
         return PerplexityLLM(config)
     elif provider == "qwen":
         return QwenLLM(config)
+    elif provider == "bailian":
+        return BailianLLM(config)
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")

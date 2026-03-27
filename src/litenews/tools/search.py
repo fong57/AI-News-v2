@@ -58,7 +58,8 @@ def get_tavily_search_tool(
     settings = settings or get_settings()
     resolved_max = _resolve_max_results(settings, node, max_results)
 
-    return TavilySearch(
+    excl = list(settings.tavily_exclude_domains) if settings.tavily_exclude_domains else None
+    kwargs: dict[str, Any] = dict(
         api_key=settings.tavily_api_key,
         max_results=resolved_max,
         search_depth=search_depth or settings.tavily_search_depth,
@@ -66,6 +67,9 @@ def get_tavily_search_tool(
         include_answer=include_answer,
         include_raw_content=include_raw_content,
     )
+    if excl:
+        kwargs["exclude_domains"] = excl
+    return TavilySearch(**kwargs)
 
 
 def get_tavily_retriever(

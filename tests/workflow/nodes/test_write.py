@@ -29,6 +29,43 @@ def _stub_tavily_tool():
     return tool
 
 
+def _stub_tavily_tool_mixed_domains():
+    tool = AsyncMock()
+    tool.ainvoke = AsyncMock(
+        return_value=[
+            {
+                "title": "Good",
+                "url": "https://good.write.test/a",
+                "content": "keep",
+            },
+            {
+                "title": "Bad",
+                "url": "https://bad.write.test/b",
+                "content": "drop",
+            },
+        ]
+    )
+    return tool
+
+
+def _stub_tavily_tool_partial_error():
+    tool = AsyncMock()
+    responses = iter(
+        [
+            "Rate limit exceeded",
+            [
+                {
+                    "title": "Recovered Result",
+                    "url": "https://example.com/recovered",
+                    "content": "Valid result despite one failed query.",
+                }
+            ],
+        ]
+    )
+    tool.ainvoke = AsyncMock(side_effect=lambda _: next(responses))
+    return tool
+
+
 class TestWriteNode:
     """Tests for the write_node function."""
 
@@ -41,6 +78,39 @@ class TestWriteNode:
 
         assert result["status"] == "error"
         assert "No outline for writing" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_filters_blocked_domains_before_pool_and_prompt(
+        self, base_state, mock_settings
+    ):
+        """Excluded domains must not appear in tavily_evidence_pool or writer prompt."""
+        base_state["outline"] = "# Section\nSome heading here"
+        base_state["topic"] = "news"
+        settings = mock_settings.model_copy(
+            update={"tavily_exclude_domains": ["bad.write.test"]}
+        )
+        mock_response = AIMessage(content="Draft body")
+        mock_invoke = AsyncMock(return_value=mock_response)
+
+        with patch("litenews.workflow.nodes.write.get_settings", return_value=settings), \
+             patch(
+                 "litenews.workflow.nodes.write.get_tavily_search_tool",
+                 return_value=_stub_tavily_tool_mixed_domains(),
+             ), \
+             patch(
+                 "litenews.workflow.nodes.write.invoke_llm_with_messages",
+                 mock_invoke,
+             ):
+            result = await write_node(base_state)
+
+        assert result["status"] == "drafted"
+        pool = result.get("tavily_evidence_pool") or []
+        assert len(pool) == 1
+        assert pool[0].get("url") == "https://good.write.test/a"
+        messages = mock_invoke.call_args[0][0]
+        content = _last_human_content(messages)
+        assert "good.write.test" in content
+        assert "bad.write.test" not in content
 
     @pytest.mark.asyncio
     async def test_generates_draft_from_outline(self, base_state, mock_settings):
@@ -273,3 +343,26 @@ Details about section 2..."""
 
         assert result["status"] == "error"
         assert "no results" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_continues_when_some_outline_queries_fail(
+        self, base_state, mock_settings
+    ):
+        """Write should proceed if at least one outline-guided query succeeds."""
+        base_state["outline"] = "# A\nLong enough line one\n## B\nLong enough line two"
+        base_state["topic"] = "test"
+        mock_response = AIMessage(content="Draft from partial results")
+
+        with patch("litenews.workflow.nodes.write.get_settings", return_value=mock_settings), \
+             patch(
+                 "litenews.workflow.nodes.write.get_tavily_search_tool",
+                 return_value=_stub_tavily_tool_partial_error(),
+             ), \
+             patch(
+                 "litenews.workflow.nodes.write.invoke_llm_with_messages",
+                 AsyncMock(return_value=mock_response),
+             ):
+            result = await write_node(base_state)
+
+        assert result["status"] == "drafted"
+        assert result["draft"] == "Draft from partial results"

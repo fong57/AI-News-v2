@@ -63,3 +63,5 @@ htmlcov/
 
 # Streamlit GUI
 app.py
+
+training.jsonl

@@ -98,6 +98,11 @@ def _langgraph_connect_help(original: str) -> str:
 PPLX_API_KEY = os.getenv("PPLX_API_KEY")
 DASHSCOPE_API_BASE = os.getenv("DASHSCOPE_API_BASE")
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+BAILIAN_API_BASE = os.getenv(
+    "BAILIAN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+)
+BAILIAN_API_KEY = os.getenv("BAILIAN_API_KEY")
+BAILIAN_MODEL = os.getenv("BAILIAN_MODEL", "qwen-plus")
 PRIMARY_LLM = os.getenv("PRIMARY_LLM", "perplexity").lower()
 PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar")
 QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-flash")
@@ -421,7 +426,7 @@ def topic_from_workflow_prompt(user_input: str) -> str:
     return p
 
 
-def _format_final_article_markdown(fa: Any) -> str:
+def _format_final_article_markdown(fa: Any, *, include_sources: bool = True) -> str:
     if fa is None:
         return ""
     if hasattr(fa, "model_dump"):
@@ -436,7 +441,7 @@ def _format_final_article_markdown(fa: Any) -> str:
         fa.get("body", "") or "",
     ]
     srcs = fa.get("sources") or []
-    if srcs:
+    if include_sources and srcs:
         lines.append("\n**參考來源**\n")
         for s in srcs:
             if isinstance(s, dict):
@@ -539,12 +544,19 @@ def _format_workflow_progress(state: Any, *, step: int) -> str:
         lines.append(f"⚠️ **狀態錯誤：** {_truncate_preview(str(err), 400)}")
 
     fa = state.get("final_article")
+    pa = state.get("published_article")
     if fa is not None:
         lines.append("")
         lines.append("---")
-        lines.append("**定稿文章**")
+        lines.append("**定稿文章（內部）**")
         lines.append("")
         lines.append(_format_final_article_markdown(fa))
+    if pa is not None:
+        lines.append("")
+        lines.append("---")
+        lines.append("**公開使用版本**")
+        lines.append("")
+        lines.append(_format_final_article_markdown(pa, include_sources=False))
 
     return "\n".join(lines)
 
@@ -588,9 +600,15 @@ def _format_remote_graph_result(result: object, *, show_interrupt_json: bool = T
             + "\n---\n".join(parts)
             + "\n```"
         )
+    pa = result.get("published_article")
     fa = result.get("final_article")
+    parts: list[str] = []
+    if pa is not None:
+        parts.append("**公開使用版本**\n\n" + _format_final_article_markdown(pa, include_sources=False))
     if fa is not None:
-        return _format_final_article_markdown(fa)
+        parts.append("**定稿文章（內部）**\n\n" + _format_final_article_markdown(fa))
+    if parts:
+        return "\n\n---\n\n".join(parts)
     err = result.get("error")
     if err:
         return f"工作流程狀態錯誤：{err}"
@@ -766,6 +784,18 @@ def call_qwen(prompt):
     )
     return response.choices[0].message.content.strip()
 
+
+def call_bailian(prompt):
+    client = OpenAI(
+        api_key=BAILIAN_API_KEY,
+        base_url=BAILIAN_API_BASE,
+    )
+    response = client.chat.completions.create(
+        model=BAILIAN_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content.strip()
+
 # --------------------------
 # Auto-select Primary LLM
 # --------------------------
@@ -774,6 +804,8 @@ def call_general_llm(prompt):
         return call_perplexity(prompt)
     elif PRIMARY_LLM == "qwen":
         return call_qwen(prompt)
+    elif PRIMARY_LLM == "bailian":
+        return call_bailian(prompt)
     else:
         return "`.env` 中選取的 LLM 無效"
 
@@ -1000,8 +1032,12 @@ if _thread_bucket().get("workflow_pending_thread_id"):
                 if default_at in ARTICLE_TYPES
                 else 0
             )
+            _llm_choices = ["perplexity", "qwen", "bailian"]
             default_lp = (ctx.get("llm_provider") or "perplexity").strip().lower()
-            lp_idx = 0 if default_lp == "perplexity" else 1
+            try:
+                lp_idx = _llm_choices.index(default_lp)
+            except ValueError:
+                lp_idx = 0
 
             default_task = str(ctx.get("task") or "write").strip().lower()
             task_idx = 1 if default_task == "edit" else 0
@@ -1037,7 +1073,7 @@ if _thread_bucket().get("workflow_pending_thread_id"):
             )
             cfg_llm = st.selectbox(
                 "LLM 供應商",
-                ["perplexity", "qwen"],
+                _llm_choices,
                 index=lp_idx,
                 key="wf_cfg_llm",
             )

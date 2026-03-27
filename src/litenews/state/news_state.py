@@ -13,7 +13,7 @@ from typing_extensions import TypedDict
 
 from litenews.config.settings import get_settings
 
-LLMProvider = Literal["perplexity", "qwen"]
+LLMProvider = Literal["perplexity", "qwen", "bailian"]
 
 WorkflowTask = Literal["write", "edit"]
 
@@ -53,7 +53,7 @@ class NewsState(TypedDict, total=False):
         topic: The news topic to research and write about.
         article_type: Required article format — one of 懶人包, 多方觀點, 其他.
         target_word_count: Article body word-count target (±10% in prompts); set by configure.
-        llm_provider: perplexity or qwen for LLM nodes after configure; set by configure.
+        llm_provider: perplexity, qwen, or bailian for LLM nodes after configure; set by configure.
         llm_model: Optional model id for that provider; empty uses env default for provider.
         query: The refined search query.
         messages: Conversation history with the LLM.
@@ -71,7 +71,8 @@ class NewsState(TypedDict, total=False):
             pass; used for pool-only verification after revise (no further Tavily calls).
         last_fact_checked_draft: Draft text that the last fact_check pass used; enables
             incremental extract/verify after revise vs full-article re-check.
-        final_article: The final polished article.
+        final_article: The final polished article (internal, with sources / fact-check block as produced by review).
+        published_article: Public paste version after publish (no fact-check notes or inline source attribution).
         feedback: Any feedback or revision requests.
         status: Current workflow status.
         error: Error message if something went wrong.
@@ -105,7 +106,8 @@ class NewsState(TypedDict, total=False):
     fact_check_evidence_cache: dict[str, Any]
     last_fact_checked_draft: str
     final_article: NewsArticle | None
-    
+    published_article: NewsArticle | None
+
     # Control
     feedback: str
     status: str
@@ -138,7 +140,7 @@ def create_initial_state(
         topic: The news topic to research and write about.
         article_type: One of 懶人包, 多方觀點, 其他 (required).
         target_word_count: Optional word-count target; configure node fills default if omitted.
-        llm_provider: Optional perplexity/qwen; configure uses settings.primary_llm if omitted.
+        llm_provider: Optional LLM provider; configure uses settings.primary_llm if omitted.
         llm_model: Optional model name for the provider; empty means use env default.
         task: Optional ``write`` (default) or ``edit`` (human draft then fact-check only).
 
@@ -167,6 +169,7 @@ def create_initial_state(
         draft="",
         fact_check_revision_round=0,
         final_article=None,
+        published_article=None,
         feedback="",
         status="initialized",
         error="",

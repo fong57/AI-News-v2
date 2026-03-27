@@ -25,7 +25,7 @@ from litenews.workflow.utils import (
 )
 from litenews.workflow.write_few_shots import build_write_few_shot_messages
 from litenews.workflow.nodes.research import _parse_search_response
-from litenews.workflow.tavily_pool import merge_into_pool
+from litenews.workflow.tavily_pool import filter_blocked_tavily_rows, merge_into_pool
 
 _MAX_OUTLINE_QUERIES = 6
 _MAX_QUERY_LEN = 400
@@ -143,15 +143,24 @@ async def write_node(state: NewsState) -> dict:
         parsed_batches = await asyncio.gather(*[_invoke_one(q) for q in queries])
 
         merged_raw: list[Any] = []
+        failed_queries: list[str] = []
         for batch, api_error in parsed_batches:
             if api_error:
-                return create_error_response(f"Outline search failed (Tavily): {api_error}")
+                failed_queries.append(api_error)
+                continue
             merged_raw.extend(batch)
 
         merged = _dedupe_results_by_url(merged_raw)
+        merged = filter_blocked_tavily_rows(merged, settings.tavily_exclude_domains)
         if not merged:
+            suffix = (
+                f" Last Tavily errors: {' | '.join(failed_queries[:3])}"
+                if failed_queries
+                else ""
+            )
             return create_error_response(
                 "Outline search returned no results. Check TAVILY_API_KEY, quota, and network."
+                + suffix
             )
 
         prior_pool = state.get("tavily_evidence_pool") or []

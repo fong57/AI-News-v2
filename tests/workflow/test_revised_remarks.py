@@ -4,6 +4,8 @@ import pytest
 
 from litenews.workflow.nodes.revise import (
     _build_unresolved_remarks_block,
+    _claim_still_in_revised_body,
+    _llm_content_to_str,
     _strip_trailing_remarks_block,
     fact_check_remarks_node,
 )
@@ -26,6 +28,19 @@ _SAMPLE_FR = {
 }
 
 
+def test_llm_content_to_str_list_text_blocks():
+    assert _llm_content_to_str(
+        [{"type": "text", "text": "標題\n\n內文含香港人口一千萬。"}]
+    ) == "標題\n\n內文含香港人口一千萬。"
+    assert _llm_content_to_str(["前", {"type": "text", "text": "後"}]) == "前後"
+
+
+def test_claim_still_in_revised_body_nfkc_fullwidth():
+    claim = {"text": "１００％", "status": "contradicted", "importance": 4}
+    body = "報導稱增長率為 100% 。"
+    assert _claim_still_in_revised_body(claim, body) is True
+
+
 def test_build_remarks_without_article_body_lists_all():
     block = _build_unresolved_remarks_block(_SAMPLE_FR)
     assert "香港人口一千萬" in block
@@ -39,8 +54,15 @@ def test_build_remarks_filters_by_article_body():
     assert "明日會下雨" not in block
 
     body_neither = "全文與上述宣稱無關。"
-    empty = _build_unresolved_remarks_block(_SAMPLE_FR, article_body=body_neither)
-    assert empty == ""
+    fallback = _build_unresolved_remarks_block(_SAMPLE_FR, article_body=body_neither)
+    # No claim text appears verbatim after revise-style rewrites → show all eligible
+    assert "香港人口一千萬" in fallback
+    assert "明日會下雨" in fallback
+
+    strict_empty = _build_unresolved_remarks_block(
+        _SAMPLE_FR, article_body=body_neither, substring_miss_fallback=False
+    )
+    assert strict_empty == ""
 
 
 def test_build_remarks_whitespace_normalized_match():
